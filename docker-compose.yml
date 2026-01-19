@@ -1,0 +1,73 @@
+services:
+  # Reverse Proxy - single entry point
+  nginx:
+    image: nginx:alpine
+    container_name: tinyplanvas-nginx
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  pocketbase:
+    build:
+      context: ./pocketbase
+      dockerfile: Dockerfile
+    container_name: tinyplanvas-pocketbase
+    restart: unless-stopped
+    # No external port - only accessible through nginx
+    expose:
+      - "8080"
+    volumes:
+      # Persist PocketBase data
+      - pocketbase_data:/pb/pb_data
+    environment:
+      - TZ=Europe/Berlin
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # URL as seen from the browser - goes through nginx on same origin
+        - NEXT_PUBLIC_POCKETBASE_URL=${NEXT_PUBLIC_POCKETBASE_URL:-}
+    container_name: tinyplanvas-frontend
+    restart: unless-stopped
+    # No external port - only accessible through nginx
+    expose:
+      - "3000"
+    environment:
+      - NEXT_PUBLIC_POCKETBASE_URL=${NEXT_PUBLIC_POCKETBASE_URL:-}
+      # Internal URL for server-side requests (SSR)
+      - POCKETBASE_INTERNAL_URL=http://pocketbase:8080
+      - TZ=Europe/Berlin
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pocketbase_data:
+    driver: local

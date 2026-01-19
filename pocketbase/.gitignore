@@ -1,0 +1,5 @@
+# PocketBase data directory (created at runtime)
+pb_data/
+
+# PocketBase hooks (if not used)
+# pb_hooks/
