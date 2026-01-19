@@ -2,7 +2,7 @@
 
 # 🎨 TinyPlanvas
 
-**A beautiful, visual resource planning tool with a GitHub-style allocation grid**
+**Visual resource planning with a paint-to-plan interface. Track who does what, when, and at what capacity.**
 
 [![Built with Next.js](https://img.shields.io/badge/Built%20with-Next.js%2014-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![Backend: PocketBase](https://img.shields.io/badge/Backend-PocketBase-blue?style=flat-square)](https://pocketbase.io/)
