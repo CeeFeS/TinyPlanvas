@@ -54,7 +54,9 @@ export function middleware(request: NextRequest) {
   
   // Versuche das Cookie zu parsen und zu validieren
   try {
-    const authData = JSON.parse(authCookie.value)
+    // Cookie ist URL-kodiert (encodeURIComponent), also zuerst dekodieren
+    const decodedValue = decodeURIComponent(authCookie.value)
+    const authData = JSON.parse(decodedValue)
     
     // Prüfe ob Token vorhanden ist
     if (!authData.token) {

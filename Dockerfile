@@ -21,7 +21,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set build-time environment variables
-ARG NEXT_PUBLIC_POCKETBASE_URL=http://pocketbase:8080
+# IMPORTANT: NEXT_PUBLIC_POCKETBASE_URL must be empty for Docker deployment!
+# This allows the browser to use window.location.origin (same origin via nginx reverse proxy)
+# The internal URL (http://pocketbase:8080) does NOT work from the browser!
+ARG NEXT_PUBLIC_POCKETBASE_URL=
 ENV NEXT_PUBLIC_POCKETBASE_URL=$NEXT_PUBLIC_POCKETBASE_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
