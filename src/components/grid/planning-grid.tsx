@@ -11,9 +11,11 @@ import {
   formatTimeSlotGroup,
   dateToSlotKey,
   percentageToOpacity,
+  getContrastTextColor,
 } from '@/lib/utils'
 import { format, parseISO, addYears, addMonths, startOfYear, startOfMonth, endOfYear, endOfMonth, isAfter, isBefore } from 'date-fns'
-import type { TaskWithAggregation, ResourceWithAllocations, Resolution } from '@/lib/types'
+import type { TaskWithAggregation, ResourceWithAllocations, Resolution, CustomColumn, CustomRowType } from '@/lib/types'
+import { CustomColumnCell, CustomColumnHeaderCell, AddColumnHeader } from './custom-column-cell'
 
 // ==================== Time Window Configuration ====================
 
@@ -96,11 +98,19 @@ function calculateMaxOffset(
 
 interface ColumnResizerProps {
   onResize: (delta: number) => void
+  /** Called once when the drag ends (mouse up) - useful for persisting the width. */
+  onResizeEnd?: () => void
 }
 
-function ColumnResizer({ onResize }: ColumnResizerProps) {
+function ColumnResizer({ onResize, onResizeEnd }: ColumnResizerProps) {
   const [isDragging, setIsDragging] = useState(false)
   const startXRef = useRef(0)
+  // Keep latest callbacks in refs so the drag effect never resubscribes mid-drag,
+  // even if the parent passes new callback identities on every render.
+  const onResizeRef = useRef(onResize)
+  const onResizeEndRef = useRef(onResizeEnd)
+  onResizeRef.current = onResize
+  onResizeEndRef.current = onResizeEnd
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -115,13 +125,14 @@ function ColumnResizer({ onResize }: ColumnResizerProps) {
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startXRef.current
       if (Math.abs(delta) > 2) {
-        onResize(delta)
+        onResizeRef.current(delta)
         startXRef.current = e.clientX
       }
     }
 
     const handleMouseUp = () => {
       setIsDragging(false)
+      onResizeEndRef.current?.()
     }
 
     document.addEventListener('mousemove', handleMouseMove)
@@ -131,7 +142,7 @@ function ColumnResizer({ onResize }: ColumnResizerProps) {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isDragging, onResize])
+  }, [isDragging])
 
   return (
     <div
@@ -167,6 +178,10 @@ const END_COLUMN_WIDTH = 88    // End (yyyy-mm-dd)
 const SUM_COLUMN_WIDTH = 56    // Σ (Sum)
 const MIN_ALLOCATION_WIDTH = 56 // Min allocation
 const MAX_ALLOCATION_WIDTH = 56 // Max allocation
+const CUSTOM_COL_WIDTH = 180 // Default custom column width (fallback when unset)
+const MIN_CUSTOM_COL_WIDTH = 100 // Min custom column width when resizing
+const MAX_CUSTOM_COL_WIDTH = 600 // Max custom column width when resizing
+const ADD_COL_WIDTH = 44 // "Add column" control width
 
 export function PlanningGrid() {
   const { t, dateLocale } = useTranslation()
@@ -189,10 +204,88 @@ export function PlanningGrid() {
     deleteTaskAsync,
     deleteResourceAsync,
     canEdit,
+    customColumns,
+    customValues,
+    createCustomColumnAsync,
+    updateCustomColumnAsync,
+    deleteCustomColumnAsync,
+    setCustomValueAsync,
   } = useProjectStore()
   
   // Check if user has edit permission
   const hasEditPermission = canEdit()
+
+  // ==================== Custom Columns ====================
+  const sortedCustomColumns = useMemo(
+    () => [...customColumns].sort((a, b) => a.sort_order - b.sort_order),
+    [customColumns]
+  )
+  const showAddColumn = hasEditPermission
+  const extraColCount = sortedCustomColumns.length + (showAddColumn ? 1 : 0)
+
+  // Live width override for the custom column currently being dragged.
+  // Only the actively-resized column lives here; everything else reads the
+  // persisted `col.width`. This keeps the drag smooth without touching the DB
+  // on every mouse move (persist happens once on drag end).
+  const [resizingCol, setResizingCol] = useState<{ id: string; width: number } | null>(null)
+
+  const getColWidth = useCallback(
+    (col: CustomColumn) =>
+      resizingCol?.id === col.id ? resizingCol.width : (col.width ?? CUSTOM_COL_WIDTH),
+    [resizingCol]
+  )
+
+  const handleCustomColResize = useCallback(
+    (col: CustomColumn) => (delta: number) => {
+      setResizingCol((prev) => {
+        const base = prev?.id === col.id ? prev.width : (col.width ?? CUSTOM_COL_WIDTH)
+        const next = Math.min(MAX_CUSTOM_COL_WIDTH, Math.max(MIN_CUSTOM_COL_WIDTH, base + delta))
+        return { id: col.id, width: next }
+      })
+    },
+    []
+  )
+
+  const handleCustomColResizeEnd = useCallback(
+    (col: CustomColumn) => () => {
+      setResizingCol((prev) => {
+        if (prev && prev.id === col.id) {
+          const finalWidth = Math.round(prev.width)
+          if (finalWidth !== (col.width ?? CUSTOM_COL_WIDTH)) {
+            updateCustomColumnAsync(col.id, { width: finalWidth }).catch(console.error)
+          }
+        }
+        return null
+      })
+    },
+    [updateCustomColumnAsync]
+  )
+
+  // Fast lookup map for custom values: `${columnId}:${rowType}:${rowId}` -> value
+  const customValueMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const cv of customValues) {
+      map.set(`${cv.column_id}:${cv.row_type}:${cv.row_id}`, cv.value)
+    }
+    return map
+  }, [customValues])
+
+  const getCustomValue = useCallback(
+    (columnId: string, rowType: CustomRowType, rowId: string) =>
+      customValueMap.get(`${columnId}:${rowType}:${rowId}`) ?? '',
+    [customValueMap]
+  )
+
+  const handleSetCustomValue = useCallback(
+    (columnId: string, rowType: CustomRowType, rowId: string, value: string) => {
+      setCustomValueAsync(columnId, rowType, rowId, value).catch(console.error)
+    },
+    [setCustomValueAsync]
+  )
+
+  const extraColsWidth =
+    sortedCustomColumns.reduce((sum, col) => sum + getColWidth(col), 0) +
+    (showAddColumn ? ADD_COL_WIDTH : 0)
 
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
   const [newTaskName, setNewTaskName] = useState('')
@@ -447,8 +540,8 @@ export function PlanningGrid() {
     setIsPainting(false)
   }, [setIsPainting])
 
-  // Calculate fixed columns width (before time slots)
-  const fixedColumnsWidth = ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH
+  // Calculate fixed columns width (before time slots) - includes custom columns
+  const fixedColumnsWidth = ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth
 
   // Cursor follower handlers - only for paint area (time slots from column 7)
   const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
@@ -500,6 +593,16 @@ export function PlanningGrid() {
     }
   }
 
+  // Add new custom column
+  const handleAddColumn = async () => {
+    if (!project || !hasEditPermission) return
+    try {
+      await createCustomColumnAsync(project.id, t('customColumns', 'newColumnName'))
+    } catch (error) {
+      console.error('Failed to create custom column:', error)
+    }
+  }
+
   // Expand all tasks by default on first render only
   useEffect(() => {
     if (!hasInitializedExpand.current && tasksWithData.length > 0) {
@@ -530,7 +633,7 @@ export function PlanningGrid() {
               opacity: percentageToOpacity(activeBrush.percentage),
             }}
           />
-          <span className="text-xs font-mono bg-white/90 px-1.5 py-0.5 rounded shadow-sm text-ink-light">
+          <span className="text-xs font-mono bg-surface/90 px-1.5 py-0.5 rounded shadow-sm text-ink-light">
             {activeBrush.percentage}%
           </span>
         </div>
@@ -553,7 +656,7 @@ export function PlanningGrid() {
           className="border-collapse w-full"
           style={{ 
             tableLayout: 'fixed',
-            minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + (timeSlots.length * 28)
+            minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * 28)
           }}
         >
           {/* Colgroup for column widths */}
@@ -564,6 +667,11 @@ export function PlanningGrid() {
             <col style={{ width: START_COLUMN_WIDTH }} />
             <col style={{ width: END_COLUMN_WIDTH }} />
             <col style={{ width: SUM_COLUMN_WIDTH }} />
+            {/* Custom columns */}
+            {sortedCustomColumns.map((col) => (
+              <col key={col.id} style={{ width: getColWidth(col) }} />
+            ))}
+            {showAddColumn && <col style={{ width: ADD_COL_WIDTH }} />}
             {/* Time slots: fill remaining space evenly (no fixed width) */}
             {timeSlots.map((_, i) => (
               <col key={i} />
@@ -631,6 +739,27 @@ export function PlanningGrid() {
               <th className="bg-paper-cream z-10 border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap">
                 <span className="font-hand text-xs text-ink-faded">{t('grid', 'total')}</span>
               </th>
+
+              {/* Custom column headers */}
+              {sortedCustomColumns.map((col) => (
+                <CustomColumnHeaderCell
+                  key={col.id}
+                  column={col}
+                  canEdit={hasEditPermission}
+                  width={getColWidth(col)}
+                  onRename={(name) => updateCustomColumnAsync(col.id, { name }).catch(console.error)}
+                  onDelete={() => deleteCustomColumnAsync(col.id).catch(console.error)}
+                  resizer={
+                    hasEditPermission ? (
+                      <ColumnResizer
+                        onResize={handleCustomColResize(col)}
+                        onResizeEnd={handleCustomColResizeEnd(col)}
+                      />
+                    ) : undefined
+                  }
+                />
+              ))}
+              {showAddColumn && <AddColumnHeader width={ADD_COL_WIDTH} onAdd={handleAddColumn} />}
               
               {/* Time slots grouped by month/year with navigation */}
               {slotGroups.map((group, groupIndex) => (
@@ -699,6 +828,12 @@ export function PlanningGrid() {
               <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
               <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
               <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
+
+              {/* Custom columns (empty sub-header) */}
+              {sortedCustomColumns.map((col) => (
+                <th key={col.id} className="bg-paper-cream z-10 border-r border-paper-lines"></th>
+              ))}
+              {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines"></th>}
               
               {timeSlots.map((slot, i) => (
                 <th 
@@ -744,6 +879,10 @@ export function PlanningGrid() {
                 resourceColumnLeft={resourceColumnLeft}
                 resourceColumnWidth={resourceColumnWidth}
                 canEdit={hasEditPermission}
+                customColumns={sortedCustomColumns}
+                showAddColumn={showAddColumn}
+                getCustomValue={getCustomValue}
+                onSetCustomValue={handleSetCustomValue}
               />
             ))}
             
@@ -751,12 +890,12 @@ export function PlanningGrid() {
             {hasEditPermission && (
               <tr className="border-t border-paper-lines hover:bg-paper-warm/50">
                 <td 
-                  className="sticky bg-white z-20 border-r border-paper-lines"
+                  className="sticky bg-surface z-20 border-r border-paper-lines"
                   style={{ left: 0, width: ID_COLUMN_WIDTH }}
                 />
                 <td 
                   colSpan={2}
-                  className="sticky bg-white z-20 border-r border-paper-lines px-3 py-2"
+                  className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-2"
                   style={{ left: taskColumnLeft }}
                 >
                   <div className="flex items-center gap-2">
@@ -772,7 +911,7 @@ export function PlanningGrid() {
                     />
                   </div>
                 </td>
-                <td colSpan={3 + timeSlots.length} className="border-r border-paper-lines"></td>
+                <td colSpan={3 + extraColCount + timeSlots.length} className="border-r border-paper-lines"></td>
               </tr>
             )}
           </tbody>
@@ -973,6 +1112,10 @@ interface TaskRowsProps {
   resourceColumnLeft: number
   resourceColumnWidth: number
   canEdit: boolean
+  customColumns: CustomColumn[]
+  showAddColumn: boolean
+  getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
+  onSetCustomValue: (columnId: string, rowType: CustomRowType, rowId: string, value: string) => void
 }
 
 function TaskRows({
@@ -993,8 +1136,13 @@ function TaskRows({
   resourceColumnLeft,
   resourceColumnWidth,
   canEdit,
+  customColumns,
+  showAddColumn,
+  getCustomValue,
+  onSetCustomValue,
 }: TaskRowsProps) {
   const { t } = useTranslation()
+  const extraColCount = customColumns.length + (showAddColumn ? 1 : 0)
   const [newResourceName, setNewResourceName] = useState('')
   const [editingTaskName, setEditingTaskName] = useState(false)
   const [editingDisplayId, setEditingDisplayId] = useState(false)
@@ -1205,6 +1353,22 @@ function TaskRows({
             {task.computed.totalEffort > 0 ? `${task.computed.totalEffort}%` : '—'}
           </span>
         </td>
+
+        {/* Custom column cells (task level) */}
+        {customColumns.map((col) => (
+          <CustomColumnCell
+            key={col.id}
+            column={col}
+            rowType="task"
+            rowId={task.id}
+            value={getCustomValue(col.id, 'task', task.id)}
+            canEdit={canEdit}
+            width={col.width ?? CUSTOM_COL_WIDTH}
+            variant="task"
+            onSave={(v) => onSetCustomValue(col.id, 'task', task.id, v)}
+          />
+        ))}
+        {showAddColumn && <td className="bg-paper-warm/30 border-l border-paper-lines" />}
         
         {/* Aggregated Time Cells - with chips and values like resources */}
         {timeSlots.map((slot, i) => {
@@ -1222,12 +1386,15 @@ function TaskRows({
                   )}
                   style={hasValue && slotData.mixedColor ? {
                     '--chip-color': slotData.mixedColor,
-                    '--chip-opacity': Math.min(0.9, Math.max(0.3, slotData.total / 200)),
+                    '--chip-opacity': Math.min(0.9, Math.max(0.45, slotData.total / 200)),
                   } as React.CSSProperties : undefined}
                   title={hasValue ? `${slotData.total}% (${slotData.colorData.length} ${t('grid', 'resources')})` : undefined}
                 >
                   {hasValue && (
-                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white/90 drop-shadow-sm">
+                    <span
+                      className="chip-label"
+                      style={{ color: getContrastTextColor(slotData.mixedColor || '#40C463') }}
+                    >
                       {slotData.total}
                     </span>
                   )}
@@ -1256,6 +1423,10 @@ function TaskRows({
               resourceColumnLeft={resourceColumnLeft}
               resourceColumnWidth={resourceColumnWidth}
               canEdit={canEdit}
+              customColumns={customColumns}
+              showAddColumn={showAddColumn}
+              getCustomValue={getCustomValue}
+              onSetCustomValue={onSetCustomValue}
             />
           ))}
           
@@ -1263,15 +1434,15 @@ function TaskRows({
           {canEdit && (
             <tr className="hover:bg-paper-warm/30">
               <td 
-                className="sticky bg-white z-20 border-r border-paper-lines"
+                className="sticky bg-surface z-20 border-r border-paper-lines"
                 style={{ left: 0, width: ID_COLUMN_WIDTH }}
               />
               <td 
-                className="sticky bg-white z-20 border-r border-paper-lines"
+                className="sticky bg-surface z-20 border-r border-paper-lines"
                 style={{ left: taskColumnLeft, width: taskColumnWidth }}
               />
               <td 
-                className="sticky bg-white z-20 border-r border-paper-lines px-3 py-1 overflow-hidden"
+                className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1 overflow-hidden"
                 style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
               >
                 <div className="flex items-center gap-2 pl-4 min-w-0">
@@ -1287,7 +1458,7 @@ function TaskRows({
                   />
                 </div>
               </td>
-              <td colSpan={3 + timeSlots.length}></td>
+              <td colSpan={3 + extraColCount + timeSlots.length}></td>
             </tr>
           )}
         </>
@@ -1311,6 +1482,10 @@ interface ResourceRowProps {
   resourceColumnLeft: number
   resourceColumnWidth: number
   canEdit: boolean
+  customColumns: CustomColumn[]
+  showAddColumn: boolean
+  getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
+  onSetCustomValue: (columnId: string, rowType: CustomRowType, rowId: string, value: string) => void
 }
 
 function ResourceRow({
@@ -1326,6 +1501,10 @@ function ResourceRow({
   resourceColumnLeft,
   resourceColumnWidth,
   canEdit,
+  customColumns,
+  showAddColumn,
+  getCustomValue,
+  onSetCustomValue,
 }: ResourceRowProps) {
   const { t } = useTranslation()
   const [isEditing, setIsEditing] = useState(false)
@@ -1360,19 +1539,19 @@ function ResourceRow({
     <tr className="hover:bg-paper-warm/20 group">
       {/* Empty ID cell */}
       <td 
-        className="sticky bg-white z-20 border-r border-paper-lines"
+        className="sticky bg-surface z-20 border-r border-paper-lines"
         style={{ left: 0, width: ID_COLUMN_WIDTH }}
       />
       
       {/* Empty task cell */}
       <td 
-        className="sticky bg-white z-20 border-r border-paper-lines"
+        className="sticky bg-surface z-20 border-r border-paper-lines"
         style={{ left: taskColumnLeft, width: taskColumnWidth }}
       />
       
       {/* Resource Name */}
       <td 
-        className="sticky bg-white z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
+        className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
         style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
       >
         <div className="flex items-center gap-2 pl-4 min-w-0">
@@ -1438,6 +1617,22 @@ function ResourceRow({
           {totalEffort > 0 ? totalEffort : '—'}
         </span>
       </td>
+
+      {/* Custom column cells (resource level) */}
+      {customColumns.map((col) => (
+        <CustomColumnCell
+          key={col.id}
+          column={col}
+          rowType="resource"
+          rowId={resource.id}
+          value={getCustomValue(col.id, 'resource', resource.id)}
+          canEdit={canEdit}
+          width={col.width ?? CUSTOM_COL_WIDTH}
+          variant="resource"
+          onSave={(v) => onSetCustomValue(col.id, 'resource', resource.id, v)}
+        />
+      ))}
+      {showAddColumn && <td className="border-l border-paper-lines" />}
       
       {/* Allocation Cells (paintable) */}
       {timeSlots.map((slot, i) => {
@@ -1460,7 +1655,16 @@ function ResourceRow({
                 onMouseDown={canEdit ? () => onCellMouseDown(resource.id, slot) : undefined}
                 onMouseEnter={canEdit ? () => onCellMouseEnter(resource.id, slot) : undefined}
                 title={allocation ? `${allocation.percentage}%` : (canEdit ? t('grid', 'clickToAssign') : '')}
-              />
+              >
+                {allocation && (
+                  <span
+                    className="chip-label"
+                    style={{ color: getContrastTextColor(allocation.color_hex) }}
+                  >
+                    {allocation.percentage}
+                  </span>
+                )}
+              </div>
             </div>
           </td>
         )
@@ -1566,7 +1770,7 @@ function ResourceSummaryRow({
     )}>
       {/* Resource Name - first column */}
       <td 
-        className="sticky bg-white z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
+        className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
         style={{ left: 0, width: summaryColumnWidth }}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -1684,15 +1888,15 @@ function ResourceSummaryRow({
                 )}
                 style={hasValue && mixedColor ? {
                   '--chip-color': isOverallocated ? '#EF4444' : isUnderallocated ? '#F59E0B' : mixedColor,
-                  '--chip-opacity': Math.min(0.95, Math.max(0.3, (slotData?.total || 0) / (maxAllocation * 1.5))),
+                  '--chip-opacity': Math.min(0.95, Math.max(0.45, (slotData?.total || 0) / (maxAllocation * 1.5))),
                 } as React.CSSProperties : undefined}
                 title={hasValue ? `${slotData?.total}%${isOverallocated ? ` (${t('grid', 'overload')}! Max: ${maxAllocation}%)` : isUnderallocated ? ` (${t('grid', 'underload')}! Min: ${minAllocation}%)` : ''}` : undefined}
               >
                 {hasValue && (
-                  <span className={cn(
-                    'absolute inset-0 flex items-center justify-center text-[9px] font-bold',
-                    (isOverallocated || isUnderallocated) ? 'text-white' : 'text-white/90 drop-shadow-sm'
-                  )}>
+                  <span
+                    className="chip-label"
+                    style={{ color: getContrastTextColor(isOverallocated ? '#EF4444' : isUnderallocated ? '#F59E0B' : (mixedColor || '#40C463')) }}
+                  >
                     {slotData?.total}
                   </span>
                 )}

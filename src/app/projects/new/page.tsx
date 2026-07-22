@@ -2,13 +2,15 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Calendar, Layers, Save } from 'lucide-react'
+import { ArrowLeft, Calendar, Layers, Save, Flag } from 'lucide-react'
 import Link from 'next/link'
 import { createProject } from '@/lib/pocketbase-api'
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
 import { LoginScreen } from '@/components/auth/login-screen'
-import type { Resolution } from '@/lib/types'
+import type { Resolution, Priority } from '@/lib/types'
+import { DEFAULT_PRIORITY } from '@/lib/types'
+import { PRIORITY_ORDER, getPriorityMeta } from '@/lib/priority'
 import { cn } from '@/lib/utils'
 import { DatePicker } from '@/components/ui/date-picker'
 
@@ -22,6 +24,7 @@ export default function NewProjectPage() {
   // Form state
   const [name, setName] = useState('')
   const [resolution, setResolution] = useState<Resolution>('month')
+  const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY)
   const [startDate, setStartDate] = useState(() => {
     // Default: Start of current month
     const now = new Date()
@@ -81,6 +84,7 @@ export default function NewProjectPage() {
       const project = await createProject({
         name: name.trim(),
         resolution,
+        priority,
         start_date: startDate,
         end_date: endDate,
       })
@@ -119,8 +123,8 @@ export default function NewProjectPage() {
   return (
     <div className="min-h-screen bg-paper-cream">
       {/* Header */}
-      <header className="h-14 border-b border-paper-lines bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="h-full px-4 flex items-center justify-between max-w-[800px] mx-auto">
+      <header className="h-14 border-b border-paper-lines bg-surface/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="h-full px-6 flex items-center justify-between w-full">
           <Link 
             href="/" 
             className="flex items-center gap-2 text-ink-light hover:text-ink transition-colors"
@@ -136,8 +140,8 @@ export default function NewProjectPage() {
       </header>
 
       {/* Content */}
-      <main className="px-4 py-8">
-        <div className="max-w-[600px] mx-auto">
+      <main className="px-6 py-8">
+        <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Error Message */}
             {error && (
@@ -181,7 +185,7 @@ export default function NewProjectPage() {
                       'p-4 rounded-lg border-2 text-left transition-all',
                       resolution === option.value
                         ? 'border-chip-green-400 bg-chip-green-50'
-                        : 'border-paper-lines bg-white hover:border-paper-warm hover:bg-paper-warm/30'
+                        : 'border-paper-lines bg-surface hover:border-paper-warm hover:bg-paper-warm/30'
                     )}
                   >
                     <span className={cn(
@@ -195,6 +199,45 @@ export default function NewProjectPage() {
                     </span>
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Priority */}
+            <div className="paper-card p-6">
+              <span className="font-hand text-ink-light text-sm mb-3 block flex items-center gap-2">
+                <Flag size={16} />
+                {t('priorities', 'priority')}
+              </span>
+
+              <div className="flex flex-wrap gap-2">
+                {PRIORITY_ORDER.map((value) => {
+                  const meta = getPriorityMeta(value)
+                  const active = priority === value
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setPriority(value)}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all',
+                        active ? 'font-semibold' : 'border-paper-lines hover:bg-paper-warm/40'
+                      )}
+                      style={active ? {
+                        borderColor: meta.color,
+                        backgroundColor: `${meta.color}1A`,
+                        color: meta.color,
+                      } : undefined}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: meta.color }}
+                      />
+                      <span className={cn('text-sm', !active && 'text-ink')}>
+                        {t('priorities', meta.labelKey)}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 

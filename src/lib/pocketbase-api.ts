@@ -18,6 +18,11 @@ import type {
   UpdateUserDTO,
   CreatePermissionDTO,
   UpdatePermissionDTO,
+  CustomColumn,
+  CustomValue,
+  CustomRowType,
+  CreateCustomColumnDTO,
+  UpdateCustomColumnDTO,
 } from './types'
 import { PRESENCE_COLORS } from './types'
 
@@ -253,6 +258,85 @@ export async function deleteAllocationByKey(resourceId: string, date: string): P
   }
 }
 
+// ==================== Custom Columns API ====================
+
+export async function fetchCustomColumns(projectId: string): Promise<CustomColumn[]> {
+  const pb = getPocketBase()
+  return await pb.collection('custom_columns').getFullList<CustomColumn>({
+    filter: `project_id = "${projectId}"`,
+    sort: 'sort_order',
+  })
+}
+
+export async function fetchCustomValues(columnIds: string[]): Promise<CustomValue[]> {
+  if (columnIds.length === 0) return []
+  const pb = getPocketBase()
+  const filter = columnIds.map(id => `column_id = "${id}"`).join(' || ')
+  return await pb.collection('custom_values').getFullList<CustomValue>({ filter })
+}
+
+export async function createCustomColumn(data: CreateCustomColumnDTO): Promise<CustomColumn> {
+  const pb = getPocketBase()
+  return await pb.collection('custom_columns').create<CustomColumn>({
+    project_id: data.project_id,
+    name: data.name,
+    sort_order: data.sort_order ?? 0,
+    width: data.width ?? 180,
+  })
+}
+
+export async function updateCustomColumn(id: string, data: UpdateCustomColumnDTO): Promise<CustomColumn> {
+  const pb = getPocketBase()
+  return await pb.collection('custom_columns').update<CustomColumn>(id, data)
+}
+
+export async function deleteCustomColumn(id: string): Promise<boolean> {
+  const pb = getPocketBase()
+  // custom_values are cascade-deleted via the relation
+  return await pb.collection('custom_columns').delete(id)
+}
+
+/**
+ * Upsert a custom value for a (column, row) pair.
+ * If the value is empty, an existing record is deleted instead.
+ */
+export async function upsertCustomValue(
+  columnId: string,
+  rowType: CustomRowType,
+  rowId: string,
+  value: string
+): Promise<CustomValue | null> {
+  const pb = getPocketBase()
+  const filter = `column_id = "${columnId}" && row_type = "${rowType}" && row_id = "${rowId}"`
+
+  let existing: CustomValue | null = null
+  try {
+    existing = await pb.collection('custom_values').getFirstListItem<CustomValue>(filter)
+  } catch {
+    existing = null
+  }
+
+  // Empty value -> remove any existing record
+  if (!value || value.trim() === '') {
+    if (existing) {
+      try {
+        await pb.collection('custom_values').delete(existing.id)
+      } catch { /* ignore */ }
+    }
+    return null
+  }
+
+  if (existing) {
+    return await pb.collection('custom_values').update<CustomValue>(existing.id, { value })
+  }
+  return await pb.collection('custom_values').create<CustomValue>({
+    column_id: columnId,
+    row_type: rowType,
+    row_id: rowId,
+    value,
+  })
+}
+
 // ==================== Full Project Data Fetch ====================
 
 export interface ProjectFullData {
@@ -260,6 +344,8 @@ export interface ProjectFullData {
   tasks: Task[]
   resources: Resource[]
   allocations: Allocation[]
+  customColumns: CustomColumn[]
+  customValues: CustomValue[]
   userPermission: 'owner' | 'edit' | 'view' | null
 }
 
@@ -327,8 +413,12 @@ export async function fetchProjectFullData(projectId: string): Promise<ProjectFu
       sort: 'date',
     })
   }
-  
-  return { project, tasks, resources, allocations, userPermission }
+
+  // Fetch custom columns + their values
+  const customColumns = await fetchCustomColumns(projectId)
+  const customValues = await fetchCustomValues(customColumns.map(c => c.id))
+
+  return { project, tasks, resources, allocations, customColumns, customValues, userPermission }
 }
 
 // ==================== Realtime Subscriptions ====================
@@ -433,6 +523,7 @@ export interface ProjectSubscription {
   unsubscribeAll: () => Promise<void>
   updateResourceIds: (resourceIds: string[]) => void
   updateTaskIds: (taskIds: string[]) => void
+  updateColumnIds: (columnIds: string[]) => void
   isReady: () => boolean
 }
 
@@ -445,12 +536,16 @@ export async function subscribeToProjectChanges(
     onTaskChange: RealtimeCallback<Task>
     onResourceChange: RealtimeCallback<Resource>
     onAllocationChange: RealtimeCallback<Allocation>
-  }
+    onCustomColumnChange?: RealtimeCallback<CustomColumn>
+    onCustomValueChange?: RealtimeCallback<CustomValue>
+  },
+  initialColumnIds: string[] = []
 ): Promise<ProjectSubscription> {
   const pb = getPocketBase()
   
   let taskIds = new Set(initialTaskIds)
   let resourceIds = new Set(initialResourceIds)
+  let columnIds = new Set(initialColumnIds)
   let ready = false
   
   // Queue for events that arrived before we could verify their parent exists
@@ -536,7 +631,30 @@ export async function subscribeToProjectChanges(
         setTimeout(processPendingAllocations, 100)
       }
     })
-    
+
+    // Subscribe to custom columns (project-scoped)
+    if (callbacks.onCustomColumnChange) {
+      await pb.collection('custom_columns').subscribe<CustomColumn>('*', (e) => {
+        if (e.record.project_id === projectId) {
+          if (e.action === 'create') {
+            columnIds.add(e.record.id)
+          } else if (e.action === 'delete') {
+            columnIds.delete(e.record.id)
+          }
+          callbacks.onCustomColumnChange!(e)
+        }
+      })
+    }
+
+    // Subscribe to custom values (filtered by known column IDs)
+    if (callbacks.onCustomValueChange) {
+      await pb.collection('custom_values').subscribe<CustomValue>('*', (e) => {
+        if (columnIds.has(e.record.column_id)) {
+          callbacks.onCustomValueChange!(e)
+        }
+      })
+    }
+
     ready = true
     console.log('[PocketBase] Realtime subscriptions established for project:', projectId)
     
@@ -561,6 +679,12 @@ export async function subscribeToProjectChanges(
       try {
         await pb.collection('allocations').unsubscribe('*')
       } catch { /* ignore */ }
+      try {
+        await pb.collection('custom_columns').unsubscribe('*')
+      } catch { /* ignore */ }
+      try {
+        await pb.collection('custom_values').unsubscribe('*')
+      } catch { /* ignore */ }
     },
     updateResourceIds: (newResourceIds: string[]) => {
       resourceIds = new Set(newResourceIds)
@@ -569,6 +693,9 @@ export async function subscribeToProjectChanges(
     updateTaskIds: (newTaskIds: string[]) => {
       taskIds = new Set(newTaskIds)
       processPendingResources()
+    },
+    updateColumnIds: (newColumnIds: string[]) => {
+      columnIds = new Set(newColumnIds)
     },
     isReady: () => ready,
   }

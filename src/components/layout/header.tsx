@@ -1,11 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronLeft, Plus, Settings, User, Shield, LogOut } from 'lucide-react'
+import { ChevronLeft, Plus, Settings, User, Shield, LogOut, Sun, Moon } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
+import { useTheme } from '@/lib/theme-context'
 import { SettingsModal } from '@/components/settings/settings-modal'
 
 interface HeaderProps {
@@ -18,6 +19,7 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
   const router = useRouter()
   const { user, isAuthenticated, isAdmin, logout } = useAuth()
   const { t } = useTranslation()
+  const { resolvedTheme, toggleTheme } = useTheme()
   const [showSettings, setShowSettings] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
 
@@ -31,8 +33,8 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
 
   return (
     <>
-      <header className="h-14 border-b border-paper-lines bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="h-full px-4 flex items-center justify-between max-w-[1800px] mx-auto">
+      <header className="h-14 border-b border-paper-lines bg-surface/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="h-full px-6 flex items-center justify-between w-full">
           {/* Left section */}
           <div className="flex items-center gap-3">
             {showProjectsLink && (
@@ -79,6 +81,16 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
 
           {/* Right section */}
           <div className="flex items-center gap-2">
+            {/* Theme Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="btn-icon"
+              aria-label={t('header', 'toggleTheme')}
+              title={t('header', 'toggleTheme')}
+            >
+              {resolvedTheme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+
             {isAuthenticated && (
               <button 
                 onClick={handleNewProject}
@@ -117,7 +129,7 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
                       className="fixed inset-0 z-40" 
                       onClick={() => setShowUserMenu(false)} 
                     />
-                    <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-paper-lines z-50 py-1 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="absolute right-0 top-full mt-1 w-56 bg-surface rounded-lg shadow-lg border border-paper-lines z-50 py-1 animate-in fade-in slide-in-from-top-2 duration-200">
                       {/* User Info */}
                       <div className="px-4 py-3 border-b border-paper-lines">
                         <p className="text-sm font-medium text-ink truncate">

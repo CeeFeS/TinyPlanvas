@@ -13,6 +13,8 @@ import { format, parseISO } from 'date-fns'
 import * as api from '@/lib/pocketbase-api'
 import type { ProjectWithOwner } from '@/lib/pocketbase-api'
 import { getPocketBase } from '@/lib/pocketbase'
+import { PriorityBadge } from '@/components/ui/priority-badge'
+import { getPriorityMeta } from '@/lib/priority'
 
 export default function DashboardPage() {
   const { isAuthenticated, isLoading: isAuthLoading, refreshUser, user } = useAuth()
@@ -23,6 +25,7 @@ export default function DashboardPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
   const [shareModalProject, setShareModalProject] = useState<ProjectWithOwner | null>(null)
+  const [sortBy, setSortBy] = useState<'priority' | 'name' | 'updated'>('priority')
 
   // Check if first-time setup is needed
   useEffect(() => {
@@ -180,11 +183,25 @@ export default function DashboardPage() {
     year: t('resolutions', 'years'),
   }
 
+  // Sorted projects (does not mutate state)
+  const sortedProjects = [...projects].sort((a, b) => {
+    if (sortBy === 'name') {
+      return a.name.localeCompare(b.name)
+    }
+    if (sortBy === 'updated') {
+      return (b.updated || '').localeCompare(a.updated || '')
+    }
+    // priority (default): urgent first, tie-break by last updated
+    const diff = getPriorityMeta(a.priority).order - getPriorityMeta(b.priority).order
+    if (diff !== 0) return diff
+    return (b.updated || '').localeCompare(a.updated || '')
+  })
+
   return (
     <div className="min-h-screen">
       <Header />
       
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="w-full px-6 py-8">
         {/* Page Header */}
         <div className="mb-8">
           <h1 className="font-hand text-3xl text-ink mb-2">
@@ -212,14 +229,29 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Project Count */}
-        <div className="flex items-center mb-6">
+        {/* Project Count + Sort */}
+        <div className="flex items-center justify-between gap-4 mb-6">
           {isLoading ? (
             <Loader2 className="w-4 h-4 text-ink-faded animate-spin" />
           ) : (
             <span className="text-sm text-ink-faded">
               {projects.length} {projects.length === 1 ? t('dashboard', 'project') : t('dashboard', 'projectsCount')}
             </span>
+          )}
+
+          {projects.length > 1 && (
+            <label className="flex items-center gap-2 text-sm text-ink-light">
+              <span className="text-ink-faded">{t('dashboard', 'sortBy')}:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'priority' | 'name' | 'updated')}
+                className="bg-surface border border-paper-lines rounded-md px-2 py-1 text-ink text-sm outline-none focus:border-ink-blue cursor-pointer"
+              >
+                <option value="priority">{t('dashboard', 'sortByPriority')}</option>
+                <option value="name">{t('dashboard', 'sortByName')}</option>
+                <option value="updated">{t('dashboard', 'sortByUpdated')}</option>
+              </select>
+            </label>
           )}
         </div>
 
@@ -231,8 +263,8 @@ export default function DashboardPage() {
         ) : projects.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((project) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+            {sortedProjects.map((project) => (
               <ProjectCard 
                 key={project.id} 
                 project={project} 
@@ -285,16 +317,21 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
     onShare()
   }
 
+  const priorityMeta = getPriorityMeta(project.priority)
+
   return (
     <Link href={`/projects/${project.id}`}>
-      <article className="paper-card p-5 hover:shadow-paper-hover transition-all cursor-pointer group relative">
+      <article
+        className="paper-card p-5 pl-6 hover:shadow-paper-hover transition-all cursor-pointer group relative overflow-hidden"
+        style={{ borderLeft: `4px solid ${priorityMeta.color}` }}
+      >
         {/* Action Buttons */}
         <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           {/* Share Button - nur für Besitzer */}
           {isOwner && (
             <button
               onClick={handleShare}
-              className="p-2 rounded-full bg-white/80 hover:bg-ink-blue/10 hover:text-ink-blue transition-colors"
+              className="p-2 rounded-full bg-surface/80 hover:bg-ink-blue/10 hover:text-ink-blue transition-colors"
               title={t('dashboard', 'shareProject')}
             >
               <Share2 size={14} />
@@ -306,7 +343,7 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
             <button
               onClick={onDelete}
               disabled={isDeleting}
-              className="p-2 rounded-full bg-white/80 hover:bg-red-50 hover:text-red-500 disabled:opacity-50 transition-colors"
+              className="p-2 rounded-full bg-surface/80 hover:bg-red-50 hover:text-red-500 disabled:opacity-50 transition-colors"
               title={t('dashboard', 'deleteProject')}
             >
               {isDeleting ? (
@@ -318,6 +355,11 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
           )}
         </div>
         
+        {/* Priority */}
+        <div className="mb-2">
+          <PriorityBadge priority={project.priority} />
+        </div>
+
         {/* Project Name */}
         <h2 className="font-hand text-xl text-ink group-hover:text-ink-blue transition-colors mb-3 pr-8">
           {project.name}

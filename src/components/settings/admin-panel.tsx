@@ -42,7 +42,7 @@ export function AdminPanel() {
           onClick={() => setActiveTab('users')}
           className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-all
             ${activeTab === 'users' 
-              ? 'bg-white text-ink border border-paper-lines border-b-white -mb-[1px]' 
+              ? 'bg-surface text-ink border border-paper-lines border-b-white -mb-[1px]' 
               : 'text-ink-light hover:text-ink hover:bg-paper-warm/50'
             }`}
         >
@@ -53,7 +53,7 @@ export function AdminPanel() {
           onClick={() => setActiveTab('permissions')}
           className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-all
             ${activeTab === 'permissions' 
-              ? 'bg-white text-ink border border-paper-lines border-b-white -mb-[1px]' 
+              ? 'bg-surface text-ink border border-paper-lines border-b-white -mb-[1px]' 
               : 'text-ink-light hover:text-ink hover:bg-paper-warm/50'
             }`}
         >
@@ -157,7 +157,7 @@ function UserManagement() {
             placeholder={t('admin', 'searchUsers')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-lg border border-paper-lines bg-white
+            className="w-full pl-9 pr-4 py-2 rounded-lg border border-paper-lines bg-surface
                      text-sm text-ink placeholder:text-ink-faded
                      focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
           />
@@ -331,7 +331,7 @@ function AddUserModal({ onClose, onUserAdded }: AddUserModalProps) {
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onClose}>
       <div 
-        className="bg-white rounded-lg shadow-xl w-full max-w-md p-6"
+        className="bg-surface rounded-lg shadow-xl w-full max-w-md p-6"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -355,7 +355,7 @@ function AddUserModal({ onClose, onUserAdded }: AddUserModalProps) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('setup', 'namePlaceholder')}
-              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-white
+              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-surface
                        text-ink placeholder:text-ink-faded text-sm
                        focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
             />
@@ -368,7 +368,7 @@ function AddUserModal({ onClose, onUserAdded }: AddUserModalProps) {
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder={t('auth', 'emailPlaceholder')}
-              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-white
+              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-surface
                        text-ink placeholder:text-ink-faded text-sm
                        focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
             />
@@ -381,7 +381,7 @@ function AddUserModal({ onClose, onUserAdded }: AddUserModalProps) {
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder={t('setup', 'minChars')}
-              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-white
+              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-surface
                        text-ink placeholder:text-ink-faded text-sm
                        focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
             />
@@ -573,7 +573,7 @@ function ProjectPermissions() {
             const project = projects.find(p => p.id === e.target.value)
             setSelectedProject(project || null)
           }}
-          className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-white
+          className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-surface
                    text-ink text-sm
                    focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
         >
@@ -641,7 +641,7 @@ function ProjectPermissions() {
                         disabled={processingId === perm.id}
                         className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all
                           ${perm.permission_level === 'view'
-                            ? 'bg-white text-ink shadow-sm'
+                            ? 'bg-surface text-ink shadow-sm'
                             : 'text-ink-faded hover:text-ink'
                           }`}
                       >
@@ -653,7 +653,7 @@ function ProjectPermissions() {
                         disabled={processingId === perm.id}
                         className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all
                           ${perm.permission_level === 'edit'
-                            ? 'bg-white text-ink shadow-sm'
+                            ? 'bg-surface text-ink shadow-sm'
                             : 'text-ink-faded hover:text-ink'
                           }`}
                       >
@@ -724,7 +724,7 @@ function AddPermissionModal({ users, onClose, onAdd }: AddPermissionModalProps) 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={onClose}>
       <div 
-        className="bg-white rounded-lg shadow-xl w-full max-w-md p-6"
+        className="bg-surface rounded-lg shadow-xl w-full max-w-md p-6"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -740,7 +740,7 @@ function AddPermissionModal({ users, onClose, onAdd }: AddPermissionModalProps) 
             <select
               value={selectedUserId}
               onChange={e => setSelectedUserId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-white
+              className="w-full px-3 py-2 rounded-lg border border-paper-lines bg-surface
                        text-ink text-sm
                        focus:outline-none focus:ring-2 focus:ring-ink-blue/20 focus:border-ink-blue"
             >

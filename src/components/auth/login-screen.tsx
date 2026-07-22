@@ -40,19 +40,19 @@ export function LoginScreen() {
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Scattered paper squares */}
         <div 
-          className="absolute w-32 h-32 bg-white/40 rounded shadow-paper rotate-12"
+          className="absolute w-32 h-32 bg-surface/40 rounded shadow-paper rotate-12"
           style={{ top: '10%', left: '5%' }}
         />
         <div 
-          className="absolute w-24 h-24 bg-white/30 rounded shadow-paper -rotate-6"
+          className="absolute w-24 h-24 bg-surface/30 rounded shadow-paper -rotate-6"
           style={{ top: '20%', right: '10%' }}
         />
         <div 
-          className="absolute w-40 h-40 bg-white/20 rounded shadow-paper rotate-3"
+          className="absolute w-40 h-40 bg-surface/20 rounded shadow-paper rotate-3"
           style={{ bottom: '15%', left: '8%' }}
         />
         <div 
-          className="absolute w-28 h-28 bg-white/35 rounded shadow-paper -rotate-12"
+          className="absolute w-28 h-28 bg-surface/35 rounded shadow-paper -rotate-12"
           style={{ bottom: '20%', right: '5%' }}
         />
         
@@ -143,7 +143,7 @@ export function LoginScreen() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t('auth', 'emailPlaceholder')}
-                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-white/50 
+                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-surface/50 
                          text-ink placeholder:text-ink-faded
                          focus:outline-none focus:ring-2 focus:ring-ink-blue/30 focus:border-ink-blue
                          transition-all duration-200"
@@ -167,7 +167,7 @@ export function LoginScreen() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-4 py-3 pr-12 rounded-lg border border-paper-lines bg-white/50 
+                  className="w-full px-4 py-3 pr-12 rounded-lg border border-paper-lines bg-surface/50 
                            text-ink placeholder:text-ink-faded
                            focus:outline-none focus:ring-2 focus:ring-ink-blue/30 focus:border-ink-blue
                            transition-all duration-200"

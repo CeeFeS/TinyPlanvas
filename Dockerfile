@@ -9,8 +9,14 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --only=production=false
+# Install dependencies.
+# All packages required to BUILD (next, typescript, tailwind, postcss, types, ...)
+# live in "dependencies". The only devDependencies are lint-only tools (eslint),
+# which are NOT needed here (next.config.js sets eslint.ignoreDuringBuilds).
+# Using --omit=dev therefore keeps the build log free of deprecated-lib warnings
+# coming from the ESLint 8 dependency chain.
+# --no-audit/--no-fund keep the build log clean.
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder

@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Kalam, Source_Sans_3, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Providers } from '@/components/providers'
+import { THEME_INIT_SCRIPT } from '@/lib/theme-context'
 
 // Handschrift-Font für Überschriften
 const kalam = Kalam({
@@ -39,7 +40,11 @@ export default function RootLayout({
     <html 
       lang="de" 
       className={`${kalam.variable} ${sourceSans.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="antialiased">
         <Providers>
           {children}

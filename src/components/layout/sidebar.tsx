@@ -29,7 +29,7 @@ export function Sidebar({ isOpen, onClose, projects, currentProjectId }: Sidebar
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed top-14 left-0 bottom-0 w-64 bg-white border-r border-paper-lines z-40',
+          'fixed top-14 left-0 bottom-0 w-64 bg-surface border-r border-paper-lines z-40',
           'transform transition-transform duration-200 ease-out',
           'lg:translate-x-0 lg:static lg:z-0',
           isOpen ? 'translate-x-0' : '-translate-x-full'

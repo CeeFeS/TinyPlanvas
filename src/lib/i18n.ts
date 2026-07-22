@@ -71,6 +71,7 @@ export const translations = {
   header: {
     newProject: { de: 'Neues Projekt', en: 'New Project' },
     administrator: { de: 'Administrator', en: 'Administrator' },
+    toggleTheme: { de: 'Design umschalten', en: 'Toggle theme' },
   },
 
   // Sidebar
@@ -87,6 +88,15 @@ export const translations = {
     administration: { de: 'Administration', en: 'Administration' },
     language: { de: 'Sprache', en: 'Language' },
     languageDesc: { de: 'Wähle die Sprache der Benutzeroberfläche', en: 'Choose the interface language' },
+    appearance: { de: 'Darstellung', en: 'Appearance' },
+    appearanceDesc: { de: 'Wähle das Erscheinungsbild der Oberfläche', en: 'Choose the look of the interface' },
+    themeLight: { de: 'Hell', en: 'Light' },
+    themeDark: { de: 'Dunkel', en: 'Dark' },
+    themeSystem: { de: 'System', en: 'System' },
+    themeLightDesc: { de: 'Helles Design', en: 'Light theme' },
+    themeDarkDesc: { de: 'Dunkles Design, schont die Augen', en: 'Dark theme, easy on the eyes' },
+    themeSystemDesc: { de: 'Folgt der Systemeinstellung', en: 'Follows your system setting' },
+    themeSavedLocally: { de: 'Die Darstellung wird lokal gespeichert.', en: 'The appearance is saved locally.' },
   },
 
   // Profile Panel
@@ -163,6 +173,12 @@ export const translations = {
     createdAt: { de: 'Angelegt', en: 'Created' },
     updatedAt: { de: 'Aktualisiert', en: 'Updated' },
     resolution: { de: 'Auflösung', en: 'Resolution' },
+    sortBy: { de: 'Sortieren', en: 'Sort by' },
+    sortByPriority: { de: 'Priorität', en: 'Priority' },
+    sortByName: { de: 'Name', en: 'Name' },
+    sortByUpdated: { de: 'Zuletzt geändert', en: 'Last updated' },
+    filterAll: { de: 'Alle', en: 'All' },
+    priority: { de: 'Priorität', en: 'Priority' },
   },
 
   // Resolution labels
@@ -179,6 +195,17 @@ export const translations = {
     weekPlanning: { de: 'Wochenbasierte Planung', en: 'Week-based planning' },
     monthPlanning: { de: 'Monatsbasierte Planung', en: 'Month-based planning' },
     yearPlanning: { de: 'Jahresbasierte Planung', en: 'Year-based planning' },
+  },
+
+  // Priority labels
+  priorities: {
+    priority: { de: 'Priorität', en: 'Priority' },
+    immediate: { de: 'Sofort', en: 'Immediate' },
+    high: { de: 'Hoch', en: 'High' },
+    medium: { de: 'Mittel', en: 'Medium' },
+    low: { de: 'Niedrig', en: 'Low' },
+    onHold: { de: 'On Hold', en: 'On Hold' },
+    selectPriority: { de: 'Priorität wählen', en: 'Select priority' },
   },
 
   // Duration labels
@@ -263,6 +290,22 @@ export const translations = {
     oneYear: { de: '1 Jahr', en: '1 year' },
     fourMonths: { de: '4 Monate', en: '4 months' },
     oneMonth: { de: '1 Monat', en: '1 month' },
+  },
+
+  // Custom Columns
+  customColumns: {
+    addColumn: { de: 'Spalte hinzufügen', en: 'Add column' },
+    newColumnName: { de: 'Neue Spalte', en: 'New column' },
+    renameColumn: { de: 'Spalte umbenennen', en: 'Rename column' },
+    deleteColumn: { de: 'Spalte löschen', en: 'Delete column' },
+    deleteConfirm: { de: 'Spalte "{name}" wirklich löschen? Alle Einträge dieser Spalte gehen verloren.', en: 'Really delete column "{name}"? All entries in this column will be lost.' },
+    clickToEdit: { de: 'Klicken zum Bearbeiten (Markdown)', en: 'Click to edit (Markdown)' },
+    empty: { de: 'Leer', en: 'Empty' },
+    editor: { de: 'Editor', en: 'Editor' },
+    preview: { de: 'Vorschau', en: 'Preview' },
+    previewEmpty: { de: 'Noch nichts eingegeben …', en: 'Nothing entered yet …' },
+    placeholder: { de: 'Text eingeben … Markdown & Zeilenumbrüche werden unterstützt.', en: 'Enter text … Markdown & line breaks are supported.' },
+    markdownHint: { de: 'Markdown wird unterstützt · Strg/Cmd+Enter zum Speichern', en: 'Markdown supported · Ctrl/Cmd+Enter to save' },
   },
 
   // Brush Editor

@@ -156,7 +156,7 @@ export function BrushEditor() {
             onClick={() => setIsOpen(false)} 
           />
           
-          <div className="absolute top-full right-0 mt-2 z-50 bg-white rounded-lg shadow-lg border border-paper-lines p-4 w-80">
+          <div className="absolute top-full right-0 mt-2 z-50 bg-surface rounded-lg shadow-lg border border-paper-lines p-4 w-80">
             
             {/* Base Color Selection */}
             <div className="mb-4">

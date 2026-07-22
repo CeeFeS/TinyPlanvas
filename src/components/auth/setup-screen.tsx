@@ -233,7 +233,7 @@ export function SetupScreen({ onSetupComplete }: SetupScreenProps) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t('setup', 'namePlaceholder')}
-                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-white/50 
+                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-surface/50 
                          text-ink placeholder:text-ink-faded
                          focus:outline-none focus:ring-2 focus:ring-ink-blue/30 focus:border-ink-blue
                          transition-all duration-200"
@@ -256,7 +256,7 @@ export function SetupScreen({ onSetupComplete }: SetupScreenProps) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t('setup', 'adminEmailPlaceholder')}
-                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-white/50 
+                className="w-full px-4 py-3 rounded-lg border border-paper-lines bg-surface/50 
                          text-ink placeholder:text-ink-faded
                          focus:outline-none focus:ring-2 focus:ring-ink-blue/30 focus:border-ink-blue
                          transition-all duration-200"
@@ -280,7 +280,7 @@ export function SetupScreen({ onSetupComplete }: SetupScreenProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={t('setup', 'minChars')}
-                  className="w-full px-4 py-3 pr-12 rounded-lg border border-paper-lines bg-white/50 
+                  className="w-full px-4 py-3 pr-12 rounded-lg border border-paper-lines bg-surface/50 
                            text-ink placeholder:text-ink-faded
                            focus:outline-none focus:ring-2 focus:ring-ink-blue/30 focus:border-ink-blue
                            transition-all duration-200"

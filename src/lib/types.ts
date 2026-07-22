@@ -52,6 +52,13 @@ export interface BaseRecord {
 // Resolution Types für Zeitachse
 export type Resolution = 'day' | 'week' | 'month' | 'year'
 
+// Priority Types für Projekte
+export type Priority = 'immediate' | 'high' | 'medium' | 'low' | 'on_hold'
+
+export const PRIORITIES: Priority[] = ['immediate', 'high', 'medium', 'low', 'on_hold']
+
+export const DEFAULT_PRIORITY: Priority = 'medium'
+
 // ==================== DB Models ====================
 
 export interface Project extends BaseRecord {
@@ -60,6 +67,7 @@ export interface Project extends BaseRecord {
   resolution: Resolution
   start_date: string // ISO Date string
   end_date: string   // ISO Date string
+  priority?: Priority
 }
 
 export interface Task extends BaseRecord {
@@ -88,6 +96,25 @@ export interface Presence extends BaseRecord {
   user_name: string
   user_color: string // z.B. "#3182BD"
   last_seen: string  // ISO Date string
+}
+
+// Row types a custom value can belong to
+export type CustomRowType = 'task' | 'resource'
+
+// Project-scoped custom column definition (free-text / markdown)
+export interface CustomColumn extends BaseRecord {
+  project_id: string
+  name: string
+  sort_order: number
+  width?: number // persisted column width in px (user-resizable)
+}
+
+// Per-row value for a custom column (task or resource row)
+export interface CustomValue extends BaseRecord {
+  column_id: string
+  row_type: CustomRowType
+  row_id: string
+  value: string // free text / markdown, may contain line breaks
 }
 
 // ==================== Auth Types ====================
@@ -192,6 +219,7 @@ export interface CreateProjectDTO {
   resolution: Resolution
   start_date: string
   end_date: string
+  priority?: Priority
 }
 
 export interface CreateTaskDTO {
@@ -199,6 +227,19 @@ export interface CreateTaskDTO {
   display_id: string
   name: string
   sort_order?: number
+}
+
+export interface CreateCustomColumnDTO {
+  project_id: string
+  name: string
+  sort_order?: number
+  width?: number
+}
+
+export interface UpdateCustomColumnDTO {
+  name?: string
+  sort_order?: number
+  width?: number
 }
 
 export interface CreateResourceDTO {

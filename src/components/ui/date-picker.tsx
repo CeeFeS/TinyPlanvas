@@ -131,7 +131,7 @@ export function DatePicker({
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'w-full px-3 py-2.5 rounded-lg border-2 border-paper-lines bg-white',
+          'w-full px-3 py-2.5 rounded-lg border-2 border-paper-lines bg-surface',
           'flex items-center justify-between gap-2',
           'hover:border-ink-faded/50 focus:outline-none focus:border-ink-blue',
           'transition-colors text-left',
@@ -153,7 +153,7 @@ export function DatePicker({
       {/* Calendar Dropdown */}
       {isOpen && (
         <div className="absolute top-full left-0 right-0 mt-1 z-50">
-          <div className="bg-white rounded-lg border-2 border-paper-lines shadow-lg p-3">
+          <div className="bg-surface rounded-lg border-2 border-paper-lines shadow-lg p-3">
             {/* Month/Year Navigation */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-1">

@@ -104,7 +104,10 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 |---------|-------------|
 | 🖌️ **Paint-to-Plan** | Click and drag to paint allocations — as intuitive as using a brush |
 | 📊 **Multi-Resolution** | View by Day, Week, Month, or Year — zoom in or out as needed |
-| 🎨 **Color-Coded Workload** | Visual heatmap shows allocation intensity instantly |
+| 🎨 **Color-Coded Workload** | Visual heatmap with exact percentages shown right on each cell |
+| 🚦 **Project Priorities** | Flag projects as Immediate, High, Medium, Low or On Hold with color coding |
+| 📝 **Custom Columns** | Add free-text, Markdown-rendered columns to any task or resource — resizable widths |
+| 🌙 **Dark Mode** | Light, dark, or follow-system theme with full-width, no-margin layout |
 | 👥 **Real-time Collaboration** | See changes from teammates live with PocketBase subscriptions |
 | 🔐 **User & Permission System** | Share projects with view or edit access |
 | 📱 **Responsive Design** | Works beautifully on desktop and tablet |
@@ -271,8 +274,8 @@ We have exciting features planned for TinyPlanvas! Here's what's coming:
 
 | Status | Feature | Description |
 |:------:|---------|-------------|
-| 🔲 | **UI Improvements** | Enhanced visual polish, animations, and micro-interactions |
-| 🔲 | **Dark Mode** | Easy on the eyes for late-night planning sessions 🌙 |
+| ✅ | **UI Improvements** | Full-width layout, larger color-coded cells, project priorities & custom columns |
+| ✅ | **Dark Mode** | Easy on the eyes for late-night planning sessions 🌙 |
 | 🔲 | **REST API** | Public API endpoints for integrations and automation |
 | 🔲 | **Export: PDF** | Generate beautiful PDF reports of your project plans |
 | 🔲 | **Export: XLSX** | Excel-compatible exports for stakeholder reporting |

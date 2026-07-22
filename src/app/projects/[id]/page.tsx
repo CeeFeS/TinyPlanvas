@@ -9,6 +9,9 @@ import { useProjectStore } from '@/store/project-store'
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
 import { LoginScreen } from '@/components/auth/login-screen'
+import { PrioritySelect } from '@/components/ui/priority-select'
+import * as api from '@/lib/pocketbase-api'
+import type { Priority } from '@/lib/types'
 import { format, parseISO } from 'date-fns'
 import { AlertCircle, Loader2, Users, Lock, Eye } from 'lucide-react'
 
@@ -31,7 +34,22 @@ export default function ProjectPage() {
     initializePresence,
     userPermission,
     canEdit,
+    setProject,
   } = useProjectStore()
+
+  // Update project priority (optimistic + persisted)
+  const handlePriorityChange = async (priority: Priority) => {
+    if (!project) return
+    const previous = project.priority
+    setProject({ ...project, priority })
+    try {
+      await api.updateProject(project.id, { priority })
+    } catch (err) {
+      console.error('Failed to update priority:', err)
+      // Revert on failure
+      setProject({ ...project, priority: previous })
+    }
+  }
 
   // Resolution labels
   const resolutionLabels: Record<string, string> = {
@@ -166,7 +184,7 @@ export default function ProjectPage() {
         projectName={project.name}
       />
       
-      <main className="px-4 py-4">
+      <main className="px-6 py-4">
         {/* Error Toast */}
         {error && (
           <div className="fixed bottom-4 right-4 z-50 bg-red-50 border border-red-200 rounded-lg p-4 shadow-lg max-w-sm">
@@ -181,7 +199,7 @@ export default function ProjectPage() {
         )}
         
         {/* Project Header Info */}
-        <div className="max-w-[1800px] mx-auto mb-4">
+        <div className="w-full mb-4">
           <div className="paper-card p-4">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
               {/* Project Info */}
@@ -211,6 +229,16 @@ export default function ProjectPage() {
                 <span className="px-2 py-0.5 bg-paper-warm rounded text-ink text-xs uppercase">
                   {resolutionLabels[project.resolution]}
                 </span>
+              </div>
+
+              {/* Priority */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-ink-faded">{t('priorities', 'priority')}:</span>
+                <PrioritySelect
+                  value={project.priority}
+                  onChange={handlePriorityChange}
+                  disabled={!canEdit()}
+                />
               </div>
               
               {/* Permission Badge */}
@@ -269,7 +297,7 @@ export default function ProjectPage() {
         </div>
         
         {/* Main Planning Grid */}
-        <div className="max-w-[1800px] mx-auto">
+        <div className="w-full">
           <PlanningGrid />
         </div>
       </main>

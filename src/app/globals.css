@@ -3,29 +3,86 @@
 @tailwind utilities;
 
 /* ==================== CSS Variables ==================== */
+/*
+ * Colors are stored as space-separated RGB channels so Tailwind can apply
+ * alpha via `rgb(var(--x) / <alpha-value>)`. The hex-named aliases below are
+ * kept for existing raw-CSS usages (var(--paper-cream) etc.).
+ * The `.dark` block overrides only the channel values, so the entire
+ * paper/ink/surface palette flips automatically in both Tailwind and raw CSS.
+ */
 :root {
-  /* Paper Colors */
-  --paper-cream: #FAF8F5;
-  --paper-warm: #F5F2ED;
-  --paper-lines: #E8E4DD;
-  --paper-margin: #FFCCCB;
-  
-  /* Ink Colors */
-  --ink-default: #2D3436;
-  --ink-light: #636E72;
-  --ink-faded: #B2BEC3;
-  --ink-blue: #0984E3;
-  --ink-red: #D63031;
-  
+  /* Paper Colors (light) */
+  --paper-cream-rgb: 250 248 245;
+  --paper-warm-rgb: 245 242 237;
+  --paper-lines-rgb: 232 228 221;
+  --paper-margin-rgb: 255 204 203;
+
+  /* Surfaces (cards / raised elements) */
+  --surface-rgb: 255 255 255;
+  --surface-raised-rgb: 255 255 255;
+
+  /* Ink Colors (light) */
+  --ink-default-rgb: 45 52 54;
+  --ink-light-rgb: 99 110 114;
+  --ink-faded-rgb: 178 190 195;
+  --ink-blue-rgb: 9 132 227;
+  --ink-red-rgb: 214 48 49;
+
+  /* Hex-style aliases (derived from channels) */
+  --paper-cream: rgb(var(--paper-cream-rgb));
+  --paper-warm: rgb(var(--paper-warm-rgb));
+  --paper-lines: rgb(var(--paper-lines-rgb));
+  --paper-margin: rgb(var(--paper-margin-rgb));
+  --surface: rgb(var(--surface-rgb));
+  --surface-raised: rgb(var(--surface-raised-rgb));
+  --ink-default: rgb(var(--ink-default-rgb));
+  --ink-light: rgb(var(--ink-light-rgb));
+  --ink-faded: rgb(var(--ink-faded-rgb));
+  --ink-blue: rgb(var(--ink-blue-rgb));
+  --ink-red: rgb(var(--ink-red-rgb));
+
   /* Shadows */
   --shadow-paper: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --shadow-paper-hover: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.05);
   --shadow-sticker: 2px 2px 0 rgba(0,0,0,0.05);
-  
+
+  /* Page background gradient stops */
+  --page-grad-1: rgba(255,252,245,0.6);
+  --page-grad-2: rgba(245,242,237,0.5);
+
   /* Fonts (set via next/font) */
   --font-hand: 'Kalam', cursive;
   --font-sans: system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* ==================== Dark Theme ==================== */
+.dark {
+  /* Paper Colors (dark) - warm-neutral dark surfaces */
+  --paper-cream-rgb: 24 26 27;
+  --paper-warm-rgb: 32 35 37;
+  --paper-lines-rgb: 58 62 66;
+  --paper-margin-rgb: 120 60 60;
+
+  /* Surfaces */
+  --surface-rgb: 34 37 40;
+  --surface-raised-rgb: 42 46 50;
+
+  /* Ink Colors (dark) - light text */
+  --ink-default-rgb: 232 230 227;
+  --ink-light-rgb: 176 182 187;
+  --ink-faded-rgb: 120 128 134;
+  --ink-blue-rgb: 88 168 255;
+  --ink-red-rgb: 255 107 107;
+
+  /* Shadows - deeper for dark */
+  --shadow-paper: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-paper-hover: 0 4px 8px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4);
+  --shadow-sticker: 2px 2px 0 rgba(0,0,0,0.3);
+
+  /* Page background gradient stops */
+  --page-grad-1: rgba(40,44,48,0.6);
+  --page-grad-2: rgba(28,30,32,0.5);
 }
 
 /* ==================== Base Styles ==================== */
@@ -49,10 +106,11 @@ body {
   
   /* Subtle paper texture effect via gradient */
   background-image: 
-    radial-gradient(ellipse at 20% 30%, rgba(255,252,245,0.6) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 70%, rgba(245,242,237,0.5) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 30%, var(--page-grad-1) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, var(--page-grad-2) 0%, transparent 50%),
     linear-gradient(180deg, var(--paper-cream) 0%, var(--paper-warm) 100%);
   background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* ==================== Notebook Paper Effect ==================== */
@@ -98,7 +156,7 @@ body {
 
 /* ==================== Card & Paper Elements ==================== */
 .paper-card {
-  background: white;
+  background: var(--surface);
   border-radius: 4px;
   box-shadow: var(--shadow-paper);
   border: 1px solid var(--paper-lines);
@@ -110,7 +168,7 @@ body {
 }
 
 .paper-card-lifted {
-  background: white;
+  background: var(--surface-raised);
   border-radius: 6px;
   box-shadow: 
     0 1px 2px rgba(0,0,0,0.04),
@@ -122,7 +180,7 @@ body {
 
 /* Sticker-like elements */
 .sticker {
-  background: white;
+  background: var(--surface);
   border-radius: 2px;
   box-shadow: var(--shadow-sticker);
   border: 1px solid var(--paper-lines);
@@ -185,7 +243,7 @@ body {
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--paper-lines);
   border-radius: 4px;
   font-family: var(--font-hand);
@@ -215,6 +273,16 @@ body {
 
 .btn-notebook-primary:hover {
   background: #0773c7;
+}
+
+.dark .btn-notebook-primary {
+  background: #2563EB;
+  border-color: #2563EB;
+  color: #ffffff;
+}
+
+.dark .btn-notebook-primary:hover {
+  background: #1D4ED8;
 }
 
 /* Icon button (small, round) */
@@ -285,8 +353,8 @@ body {
 
 /* ==================== Allocation Chips (GitHub-style) ==================== */
 .allocation-cell {
-  min-width: 28px;
-  height: 28px;
+  min-width: 40px;
+  height: 34px;
   padding: 3px;
   display: flex;
   align-items: center;
@@ -295,23 +363,50 @@ body {
 }
 
 .allocation-chip {
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
+  width: 34px;
+  height: 28px;
+  border-radius: 5px;
   background: var(--paper-lines);
   cursor: pointer;
   transition: all 0.1s ease;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
 }
 
 .allocation-chip:hover {
-  transform: scale(1.2);
+  transform: scale(1.12);
   z-index: 5;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(0,0,0,0.06);
 }
 
 .allocation-chip.has-value {
+  background: transparent;
+}
+
+/* Fill layer carries the opacity so the label stays crisp */
+.allocation-chip.has-value::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: var(--chip-color, #40C463);
   opacity: var(--chip-opacity, 1);
+  z-index: 0;
+}
+
+/* Percentage label inside a chip */
+.allocation-chip .chip-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Empty chip on hover */
@@ -339,7 +434,7 @@ body {
 }
 
 .time-header-slot {
-  width: 28px;
+  width: 40px;
   text-align: center;
   font-size: 0.625rem;
   font-family: var(--font-mono);
@@ -352,7 +447,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: white;
+  background: var(--surface);
   border-radius: 4px;
   border: 1px solid var(--paper-lines);
 }
@@ -389,7 +484,7 @@ body {
 }
 
 .modal-content {
-  background: white;
+  background: var(--surface);
   border-radius: 8px;
   box-shadow: 
     0 4px 6px rgba(0,0,0,0.05),
@@ -446,7 +541,7 @@ body {
 
 /* ==================== Time Slot Columns ==================== */
 .time-slot-col {
-  min-width: 28px;
+  min-width: 40px;
   width: auto;
 }
 
@@ -468,7 +563,7 @@ table.w-full .time-slot-col {
 /* Task bar cells - zusammenhängender Balken ohne Trennlinien */
 .task-bar-cell {
   text-align: center;
-  height: 28px;
+  height: 34px;
   /* Keine Trennlinien für durchgehenden Balken-Effekt */
 }
 
@@ -561,6 +656,116 @@ table.w-full .time-slot-col {
 .allocation-chip.paintable.empty:hover::after {
   opacity: 1;
   border-color: var(--ink-faded);
+}
+
+/* ==================== Markdown Rendering ==================== */
+.markdown-body {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--ink-default);
+  word-break: break-word;
+}
+
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+
+.markdown-body p { margin: 0 0 0.5em; }
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  font-family: var(--font-hand);
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0.6em 0 0.35em;
+  color: var(--ink-default);
+}
+.markdown-body h1 { font-size: 1.25rem; }
+.markdown-body h2 { font-size: 1.1rem; }
+.markdown-body h3 { font-size: 1rem; }
+.markdown-body h4 { font-size: 0.9rem; }
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 0.5em;
+  padding-left: 1.25em;
+}
+.markdown-body ul { list-style: disc; }
+.markdown-body ol { list-style: decimal; }
+.markdown-body li { margin: 0.15em 0; }
+
+.markdown-body a {
+  color: var(--ink-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--paper-warm);
+  border: 1px solid var(--paper-lines);
+  border-radius: 3px;
+  padding: 0.05em 0.35em;
+}
+
+.markdown-body pre {
+  background: var(--paper-warm);
+  border: 1px solid var(--paper-lines);
+  border-radius: 5px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  margin: 0 0 0.5em;
+}
+.markdown-body pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--paper-lines);
+  padding-left: 0.75em;
+  margin: 0 0 0.5em;
+  color: var(--ink-light);
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--paper-lines);
+  margin: 0.6em 0;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0 0 0.5em;
+  font-size: 0.95em;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--paper-lines);
+  padding: 0.25em 0.5em;
+  text-align: left;
+}
+.markdown-body th { background: var(--paper-warm); font-weight: 600; }
+
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.35em;
+  vertical-align: middle;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+/* Clamp preview inside grid cells */
+.markdown-clamp {
+  max-height: 96px;
+  overflow-y: auto;
 }
 
 /* ==================== Utility Classes ==================== */

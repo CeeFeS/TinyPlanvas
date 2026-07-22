@@ -19,6 +19,8 @@ const EXCLUDED_PATHS = [
   '/_next',
   '/api',
   '/favicon.ico',
+  '/icon.svg', // App-Router Favicon (Next.js Metadata-Route)
+  '/apple-icon', // App-Router Apple-Touch-Icon (falls vorhanden)
   '/static',
   '/.well-known', // Chrome DevTools und andere well-known Pfade
 ]
@@ -89,6 +91,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|icon.svg|apple-icon).*)',
   ],
 }

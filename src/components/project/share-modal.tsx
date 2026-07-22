@@ -129,7 +129,7 @@ export function ShareProjectModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div 
-        className="bg-white rounded-lg shadow-2xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col"
+        className="bg-surface rounded-lg shadow-2xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
         style={{ animation: 'slideUp 0.2s ease' }}
       >
@@ -259,7 +259,7 @@ function UserPermissionRow({
     <div className={`
       flex items-center gap-3 p-3 rounded-lg border transition-all
       ${hasPermission 
-        ? 'bg-white border-ink-blue/20 shadow-sm' 
+        ? 'bg-surface border-ink-blue/20 shadow-sm' 
         : 'bg-paper-warm/30 border-paper-lines hover:border-paper-lines/80'
       }
     `}>

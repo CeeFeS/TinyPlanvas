@@ -1,6 +1,7 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
+  darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -9,19 +10,24 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Paper & Notebook colors
+        // Paper & Notebook colors (variable-driven for light/dark theming)
         paper: {
-          cream: '#FAF8F5',
-          warm: '#F5F2ED',
-          lines: '#E8E4DD',
-          margin: '#FFCCCB',
+          cream: 'rgb(var(--paper-cream-rgb) / <alpha-value>)',
+          warm: 'rgb(var(--paper-warm-rgb) / <alpha-value>)',
+          lines: 'rgb(var(--paper-lines-rgb) / <alpha-value>)',
+          margin: 'rgb(var(--paper-margin-rgb) / <alpha-value>)',
+        },
+        // Card / raised surfaces (replaces hard-coded white)
+        surface: {
+          DEFAULT: 'rgb(var(--surface-rgb) / <alpha-value>)',
+          raised: 'rgb(var(--surface-raised-rgb) / <alpha-value>)',
         },
         ink: {
-          DEFAULT: '#2D3436',
-          light: '#636E72',
-          faded: '#B2BEC3',
-          blue: '#0984E3',
-          red: '#D63031',
+          DEFAULT: 'rgb(var(--ink-default-rgb) / <alpha-value>)',
+          light: 'rgb(var(--ink-light-rgb) / <alpha-value>)',
+          faded: 'rgb(var(--ink-faded-rgb) / <alpha-value>)',
+          blue: 'rgb(var(--ink-blue-rgb) / <alpha-value>)',
+          red: 'rgb(var(--ink-red-rgb) / <alpha-value>)',
         },
         // Allocation chip colors (GitHub-style)
         chip: {

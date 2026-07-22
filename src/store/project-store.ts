@@ -9,6 +9,9 @@ import {
   type BrushConfig,
   type TaskWithAggregation,
   type ResourceWithAllocations,
+  type CustomColumn,
+  type CustomValue,
+  type CustomRowType,
   DEFAULT_BASE_COLOR,
 } from '@/lib/types'
 import { computeTaskAggregation, buildAllocationMap } from '@/lib/utils'
@@ -23,6 +26,10 @@ interface ProjectState {
   tasks: Task[]
   resources: Resource[]
   allocations: Allocation[]
+
+  // Custom columns feature
+  customColumns: CustomColumn[]
+  customValues: CustomValue[]
   
   // User's permission level for current project
   userPermission: 'owner' | 'edit' | 'view' | null
@@ -59,6 +66,8 @@ interface ProjectActions {
     tasks: Task[]
     resources: Resource[]
     allocations: Allocation[]
+    customColumns?: CustomColumn[]
+    customValues?: CustomValue[]
     userPermission: 'owner' | 'edit' | 'view' | null
   }) => void
   
@@ -89,12 +98,21 @@ interface ProjectActions {
   setAllocationAsync: (resourceId: string, date: string, percentage: number, colorHex: string) => Promise<void>
   removeAllocation: (resourceId: string, date: string) => void
   removeAllocationAsync: (resourceId: string, date: string) => Promise<void>
+
+  // Custom columns CRUD
+  createCustomColumnAsync: (projectId: string, name: string) => Promise<CustomColumn>
+  updateCustomColumnAsync: (id: string, patch: { name?: string; width?: number }) => Promise<void>
+  deleteCustomColumnAsync: (id: string) => Promise<void>
+  setCustomValueAsync: (columnId: string, rowType: CustomRowType, rowId: string, value: string) => Promise<void>
+  getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
   
   // Realtime event handlers
   handleProjectChange: (event: RecordSubscription<Project>) => void
   handleTaskChange: (event: RecordSubscription<Task>) => void
   handleResourceChange: (event: RecordSubscription<Resource>) => void
   handleAllocationChange: (event: RecordSubscription<Allocation>) => void
+  handleCustomColumnChange: (event: RecordSubscription<CustomColumn>) => void
+  handleCustomValueChange: (event: RecordSubscription<CustomValue>) => void
   handlePresenceChange: (event: RecordSubscription<Presence>) => void
   
   // Subscribe to realtime updates
@@ -132,6 +150,8 @@ const initialState: ProjectState = {
   tasks: [],
   resources: [],
   allocations: [],
+  customColumns: [],
+  customValues: [],
   userPermission: null,
   tasksWithData: [],
   isLoading: false,
@@ -196,6 +216,8 @@ export const useProjectStore = create<ProjectStore>()(
       state.tasks = data.tasks
       state.resources = data.resources
       state.allocations = data.allocations
+      state.customColumns = data.customColumns ?? []
+      state.customValues = data.customValues ?? []
       state.userPermission = data.userPermission
       state.tasksWithData = computeTasksWithData(
         data.tasks, 
@@ -656,6 +678,127 @@ export const useProjectStore = create<ProjectStore>()(
       }
     },
     
+    // ==================== Custom Columns ====================
+    getCustomValue: (columnId, rowType, rowId) => {
+      const v = get().customValues.find(
+        cv => cv.column_id === columnId && cv.row_type === rowType && cv.row_id === rowId
+      )
+      return v?.value ?? ''
+    },
+
+    createCustomColumnAsync: async (projectId, name) => {
+      const sortOrder = get().customColumns.length
+      const newColumn = await api.createCustomColumn({ project_id: projectId, name, sort_order: sortOrder })
+      set((state) => {
+        if (!state.customColumns.find(c => c.id === newColumn.id)) {
+          state.customColumns.push(newColumn)
+        }
+        if (state.subscription) {
+          state.subscription.updateColumnIds(state.customColumns.map(c => c.id))
+        }
+      })
+      return newColumn
+    },
+
+    updateCustomColumnAsync: async (id, patch) => {
+      const original = get().customColumns.find(c => c.id === id)
+      // Optimistic update (name and/or width)
+      set((state) => {
+        const idx = state.customColumns.findIndex(c => c.id === id)
+        if (idx !== -1) {
+          if (patch.name !== undefined) state.customColumns[idx].name = patch.name
+          if (patch.width !== undefined) state.customColumns[idx].width = patch.width
+        }
+      })
+      try {
+        await api.updateCustomColumn(id, patch)
+      } catch (error) {
+        if (original) {
+          set((state) => {
+            const idx = state.customColumns.findIndex(c => c.id === id)
+            if (idx !== -1) {
+              if (patch.name !== undefined) state.customColumns[idx].name = original.name
+              if (patch.width !== undefined) state.customColumns[idx].width = original.width
+            }
+            state.error = error instanceof Error ? error.message : 'Fehler beim Aktualisieren'
+          })
+        }
+      }
+    },
+
+    deleteCustomColumnAsync: async (id) => {
+      const originalColumns = get().customColumns
+      const originalValues = get().customValues
+      // Optimistic remove (column + its values)
+      set((state) => {
+        state.customColumns = state.customColumns.filter(c => c.id !== id)
+        state.customValues = state.customValues.filter(cv => cv.column_id !== id)
+        if (state.subscription) {
+          state.subscription.updateColumnIds(state.customColumns.map(c => c.id))
+        }
+      })
+      try {
+        await api.deleteCustomColumn(id)
+      } catch (error) {
+        set((state) => {
+          state.customColumns = originalColumns
+          state.customValues = originalValues
+          state.error = error instanceof Error ? error.message : 'Fehler beim Löschen'
+        })
+      }
+    },
+
+    setCustomValueAsync: async (columnId, rowType, rowId, value) => {
+      const trimmed = value
+      const original = get().customValues.find(
+        cv => cv.column_id === columnId && cv.row_type === rowType && cv.row_id === rowId
+      )
+
+      // Optimistic update
+      set((state) => {
+        const idx = state.customValues.findIndex(
+          cv => cv.column_id === columnId && cv.row_type === rowType && cv.row_id === rowId
+        )
+        if (!trimmed || trimmed.trim() === '') {
+          if (idx !== -1) state.customValues.splice(idx, 1)
+        } else if (idx !== -1) {
+          state.customValues[idx].value = trimmed
+        } else {
+          state.customValues.push({
+            id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            column_id: columnId,
+            row_type: rowType,
+            row_id: rowId,
+            value: trimmed,
+          })
+        }
+      })
+
+      try {
+        const saved = await api.upsertCustomValue(columnId, rowType, rowId, trimmed)
+        set((state) => {
+          const idx = state.customValues.findIndex(
+            cv => cv.column_id === columnId && cv.row_type === rowType && cv.row_id === rowId
+          )
+          if (saved) {
+            if (idx !== -1) state.customValues[idx] = saved
+            else state.customValues.push(saved)
+          } else if (idx !== -1) {
+            state.customValues.splice(idx, 1)
+          }
+        })
+      } catch (error) {
+        // Rollback
+        set((state) => {
+          state.customValues = state.customValues.filter(
+            cv => !(cv.column_id === columnId && cv.row_type === rowType && cv.row_id === rowId)
+          )
+          if (original) state.customValues.push(original)
+          state.error = error instanceof Error ? error.message : 'Fehler beim Speichern'
+        })
+      }
+    },
+
     // Realtime event handlers
     handleProjectChange: (event) => {
       if (event.action === 'update') {
@@ -664,6 +807,44 @@ export const useProjectStore = create<ProjectStore>()(
         })
       }
       // Handle delete - could navigate away or show message
+    },
+
+    handleCustomColumnChange: (event) => {
+      const { action, record } = event
+      set((state) => {
+        if (action === 'create') {
+          if (!state.customColumns.find(c => c.id === record.id)) {
+            state.customColumns.push(record)
+          }
+        } else if (action === 'update') {
+          const idx = state.customColumns.findIndex(c => c.id === record.id)
+          if (idx !== -1) state.customColumns[idx] = record
+        } else if (action === 'delete') {
+          state.customColumns = state.customColumns.filter(c => c.id !== record.id)
+          state.customValues = state.customValues.filter(cv => cv.column_id !== record.id)
+        }
+        state.customColumns.sort((a, b) => a.sort_order - b.sort_order)
+        if (state.subscription) {
+          state.subscription.updateColumnIds(state.customColumns.map(c => c.id))
+        }
+      })
+    },
+
+    handleCustomValueChange: (event) => {
+      const { action, record } = event
+      set((state) => {
+        if (action === 'create' || action === 'update') {
+          // Replace any temp/existing entry for the same (column,row)
+          const idx = state.customValues.findIndex(
+            cv => cv.id === record.id ||
+                  (cv.column_id === record.column_id && cv.row_type === record.row_type && cv.row_id === record.row_id)
+          )
+          if (idx !== -1) state.customValues[idx] = record
+          else state.customValues.push(record)
+        } else if (action === 'delete') {
+          state.customValues = state.customValues.filter(cv => cv.id !== record.id)
+        }
+      })
     },
     
     handleTaskChange: (event) => {
@@ -844,6 +1025,7 @@ export const useProjectStore = create<ProjectStore>()(
       
       const taskIds = state.tasks.map(t => t.id)
       const resourceIds = state.resources.map(r => r.id)
+      const columnIds = state.customColumns.map(c => c.id)
       
       try {
         const subscription = await api.subscribeToProjectChanges(
@@ -855,7 +1037,10 @@ export const useProjectStore = create<ProjectStore>()(
             onTaskChange: (e) => get().handleTaskChange(e),
             onResourceChange: (e) => get().handleResourceChange(e),
             onAllocationChange: (e) => get().handleAllocationChange(e),
-          }
+            onCustomColumnChange: (e) => get().handleCustomColumnChange(e),
+            onCustomValueChange: (e) => get().handleCustomValueChange(e),
+          },
+          columnIds
         )
         
         set((s) => {

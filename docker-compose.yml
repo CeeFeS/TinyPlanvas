@@ -14,7 +14,9 @@ services:
       pocketbase:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/api/health"]
+      # 127.0.0.1 statt localhost: nginx lauscht nur auf IPv4 (listen 80),
+      # localhost würde im Container auf IPv6 [::1] auflösen -> Connection refused.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
