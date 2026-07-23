@@ -53,18 +53,29 @@ export function generateTimeSlots(
 }
 
 /**
- * Formatiert ein Datum für die Header-Anzeige
+ * Formatiert ein Datum für die Header-Anzeige.
+ * Sprach-/Locale-abhängig: KW-Abkürzung und Monatskürzel richten sich nach der UI-Sprache.
+ * - week:  de → "KW27", en → "W27"
+ * - month: locale-abhängiges Kurzkürzel (de "Mär" / en "Mar" …)
+ * - day/year: sprachneutrale Zahlen
  */
-export function formatTimeSlotHeader(date: Date, resolution: Resolution): string {
+export function formatTimeSlotHeader(
+  date: Date,
+  resolution: Resolution,
+  locale?: Locale,
+  language?: 'de' | 'en'
+): string {
+  const loc = locale || de
+  const weekPrefix = language === 'en' ? 'W' : 'KW'
   switch (resolution) {
     case 'day':
-      return format(date, 'd', { locale: de })
+      return format(date, 'd', { locale: loc })
     case 'week':
-      return `KW${format(date, 'w', { locale: de })}`
+      return `${weekPrefix}${format(date, 'w', { locale: loc })}`
     case 'month':
-      return format(date, 'MMM', { locale: de })
+      return format(date, 'MMM', { locale: loc })
     case 'year':
-      return format(date, 'yyyy', { locale: de })
+      return format(date, 'yyyy', { locale: loc })
   }
 }
 

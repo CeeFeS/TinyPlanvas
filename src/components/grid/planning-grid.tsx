@@ -12,10 +12,12 @@ import {
   dateToSlotKey,
   percentageToOpacity,
   getContrastTextColor,
+  computeTaskAggregation,
 } from '@/lib/utils'
 import { format, parseISO, addYears, addMonths, startOfYear, startOfMonth, endOfYear, endOfMonth, isAfter, isBefore } from 'date-fns'
 import type { TaskWithAggregation, ResourceWithAllocations, Resolution, CustomColumn, CustomRowType } from '@/lib/types'
 import { CustomColumnCell, CustomColumnHeaderCell, AddColumnHeader } from './custom-column-cell'
+import { ColumnFilter } from './column-filter'
 
 // ==================== Time Window Configuration ====================
 
@@ -184,7 +186,7 @@ const MAX_CUSTOM_COL_WIDTH = 600 // Max custom column width when resizing
 const ADD_COL_WIDTH = 44 // "Add column" control width
 
 export function PlanningGrid() {
-  const { t, dateLocale } = useTranslation()
+  const { t, dateLocale, language } = useTranslation()
   const {
     project,
     tasksWithData,
@@ -290,8 +292,45 @@ export function PlanningGrid() {
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
   const [newTaskName, setNewTaskName] = useState('')
   const gridRef = useRef<HTMLDivElement>(null)
+  // The shared scroll region (both axes) that grid + summary live in. The grid
+  // header sticks to its top and the frozen columns to its left.
+  const scrollRef = useRef<HTMLDivElement>(null)
   const hasInitializedExpand = useRef(false)
   const [showResourceSummary, setShowResourceSummary] = useState(true)
+
+  // Measure the first header row (month/year) of each sticky table so its second
+  // (day/week) row can stick *directly* below it. The height is published on the
+  // owning <table> element as `--row1-h`, consumed by the sticky thead rules in
+  // globals.css. Measuring per-table keeps the main grid and the summary table
+  // aligned even when their first rows differ in height.
+  const gridHeadRow1Ref = useRef<HTMLTableRowElement>(null)
+  const summaryHeadRow1Ref = useRef<HTMLTableRowElement>(null)
+  useEffect(() => {
+    const rows = [gridHeadRow1Ref.current, summaryHeadRow1Ref.current].filter(
+      (r): r is HTMLTableRowElement => r != null
+    )
+    if (rows.length === 0) return
+    const observers: ResizeObserver[] = []
+    for (const row of rows) {
+      const table = row.closest('table') as HTMLElement | null
+      if (!table) continue
+      const update = () =>
+        table.style.setProperty(
+          '--row1-h',
+          `${Math.round(row.getBoundingClientRect().height)}px`
+        )
+      update()
+      const ro = new ResizeObserver(update)
+      ro.observe(row)
+      observers.push(ro)
+    }
+    return () => observers.forEach((o) => o.disconnect())
+  }, [project, showResourceSummary, tasksWithData])
+
+  // Per-column filters (empty set = no filter for that column). Custom columns
+  // are intentionally not filterable.
+  const [taskFilter, setTaskFilter] = useState<Set<string>>(new Set())
+  const [resourceFilter, setResourceFilter] = useState<Set<string>>(new Set())
   
   // Time window navigation offset (0 = first window)
   const [timeWindowOffset, setTimeWindowOffset] = useState(0)
@@ -440,8 +479,58 @@ export function PlanningGrid() {
       }
     }
 
-    return Array.from(groupedByName.values()).sort((a, b) => a.name.localeCompare(b.name))
-  }, [project, tasksWithData])
+    const all = Array.from(groupedByName.values()).sort((a, b) => a.name.localeCompare(b.name))
+    // Apply resource filter (empty set = show all)
+    if (resourceFilter.size === 0) return all
+    return all.filter((g) => resourceFilter.has(g.name))
+  }, [project, tasksWithData, resourceFilter])
+
+  // Slot key of "today" - used to highlight the current time column
+  const currentSlotKey = useMemo(
+    () => (project ? dateToSlotKey(new Date(), project.resolution) : ''),
+    [project]
+  )
+
+  // Distinct values per filterable (standard) column - populate the dropdowns.
+  const filterValues = useMemo(() => {
+    const tasks = new Set<string>()
+    const resources = new Set<string>()
+    for (const task of tasksWithData) {
+      tasks.add(task.name)
+      for (const r of task.resources) {
+        resources.add(r.name)
+      }
+    }
+    const byStr = (a: string, b: string) => a.localeCompare(b)
+    return {
+      task: Array.from(tasks).sort(byStr),
+      resource: Array.from(resources).sort(byStr),
+    }
+  }, [tasksWithData])
+
+  const anyResourceLevelFilter = resourceFilter.size > 0
+
+  // Tasks with all active column filters applied. Resource-level filters reduce
+  // each task's resources (aggregates recomputed); tasks without any remaining
+  // resource - or not matching the task filter - are hidden.
+  const filteredTasks = useMemo(() => {
+    if (taskFilter.size === 0 && !anyResourceLevelFilter) return tasksWithData
+    const result: TaskWithAggregation[] = []
+    for (const task of tasksWithData) {
+      if (taskFilter.size > 0 && !taskFilter.has(task.name)) continue
+      if (!anyResourceLevelFilter) {
+        result.push(task)
+        continue
+      }
+      const resources = task.resources.filter((r) => {
+        if (resourceFilter.size > 0 && !resourceFilter.has(r.name)) return false
+        return true
+      })
+      if (resources.length === 0) continue
+      result.push({ ...task, resources, computed: computeTaskAggregation(resources) })
+    }
+    return result
+  }, [tasksWithData, taskFilter, resourceFilter, anyResourceLevelFilter])
 
   // Handle column resize
   const handleTaskColumnResize = useCallback((delta: number) => {
@@ -547,16 +636,13 @@ export function PlanningGrid() {
   const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
     setCursorPos({ x: e.clientX, y: e.clientY })
     
-    // Check if mouse is over time slot area (from column 7)
-    const gridElement = gridRef.current
-    if (gridElement) {
-      const scrollContainer = gridElement.querySelector('.overflow-x-auto')
-      if (scrollContainer) {
-        const scrollRect = scrollContainer.getBoundingClientRect()
-        const scrollLeft = scrollContainer.scrollLeft
-        const relativeX = e.clientX - scrollRect.left + scrollLeft
-        setIsOverPaintArea(relativeX >= fixedColumnsWidth)
-      }
+    // Check if mouse is over the time slot area (right of the frozen columns)
+    const scrollContainer = scrollRef.current
+    if (scrollContainer) {
+      const scrollRect = scrollContainer.getBoundingClientRect()
+      const scrollLeft = scrollContainer.scrollLeft
+      const relativeX = e.clientX - scrollRect.left + scrollLeft
+      setIsOverPaintArea(relativeX >= fixedColumnsWidth)
     }
   }, [fixedColumnsWidth])
 
@@ -639,21 +725,22 @@ export function PlanningGrid() {
         </div>
       )}
       
+      <div ref={scrollRef} className="planvas-scroll flex-1 min-h-0 overflow-auto">
       <div 
         ref={gridRef}
-        className="paper-card overflow-hidden"
+        className="paper-card planvas-grid-card"
         onMouseUp={handleMouseUp}
         onMouseMove={handleGridMouseMove}
         onMouseLeave={handleGridMouseLeave}
       >
-      <div className="overflow-x-auto">
         {/* 
           Table uses full width with minimum based on content.
           Fixed columns (ID, Task, Resource, Start, End, Σ) have explicit widths.
           Time slots share remaining space evenly.
+          `planvas-sticky-head` enables the sticky (top) column header.
         */}
         <table 
-          className="border-collapse w-full"
+          className="planvas-sticky-head w-full"
           style={{ 
             tableLayout: 'fixed',
             minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * 28)
@@ -681,17 +768,23 @@ export function PlanningGrid() {
           {/* Header */}
           <thead>
             {/* Month/Year row */}
-            <tr className="border-b border-paper-lines">
+            <tr ref={gridHeadRow1Ref} className="border-b border-paper-lines">
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines"
+                className="sticky bg-paper-cream z-30 border-r border-paper-lines"
                 style={{ left: 0, width: ID_COLUMN_WIDTH }}
               />
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines text-left px-3 py-2 relative"
+                className="sticky bg-paper-cream z-30 border-r border-paper-lines text-left px-3 py-2 relative"
                 style={{ left: taskColumnLeft, width: taskColumnWidth }}
               >
                 <div className="flex items-center gap-2">
                   <span className="font-hand text-ink-light">{t('grid', 'task')}</span>
+                  <ColumnFilter
+                    title={t('grid', 'task')}
+                    values={filterValues.task}
+                    selected={taskFilter}
+                    onChange={setTaskFilter}
+                  />
                   <div className="flex items-center gap-1 ml-auto mr-2">
                     <button
                       onClick={expandAll}
@@ -724,10 +817,18 @@ export function PlanningGrid() {
                 <ColumnResizer onResize={handleTaskColumnResize} />
               </th>
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines text-left px-3 py-2 relative"
+                className="planvas-freeze-edge sticky bg-paper-cream z-30 border-r border-paper-lines text-left px-3 py-2 relative"
                 style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
               >
-                <span className="font-hand text-ink-light">{t('grid', 'resource')}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-hand text-ink-light">{t('grid', 'resource')}</span>
+                  <ColumnFilter
+                    title={t('grid', 'resource')}
+                    values={filterValues.resource}
+                    selected={resourceFilter}
+                    onChange={setResourceFilter}
+                  />
+                </div>
                 <ColumnResizer onResize={handleResourceColumnResize} />
               </th>
               <th className="bg-paper-cream z-10 border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap">
@@ -814,15 +915,15 @@ export function PlanningGrid() {
             {/* Day/Week numbers row */}
             <tr className="border-b-2 border-paper-lines">
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines"
+                className="sticky bg-paper-cream z-30 border-r border-paper-lines"
                 style={{ left: 0, width: ID_COLUMN_WIDTH }}
               />
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines"
+                className="sticky bg-paper-cream z-30 border-r border-paper-lines"
                 style={{ left: taskColumnLeft, width: taskColumnWidth }}
               />
               <th 
-                className="sticky bg-paper-cream z-20 border-r border-paper-lines"
+                className="planvas-freeze-edge sticky bg-paper-cream z-30 border-r border-paper-lines"
                 style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
               />
               <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
@@ -835,21 +936,24 @@ export function PlanningGrid() {
               ))}
               {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines"></th>}
               
-              {timeSlots.map((slot, i) => (
-                <th 
-                  key={i}
-                  className="time-slot-header bg-paper-cream z-10"
-                >
-                  <span className="font-mono text-[10px] text-ink-faded">
-                    {formatTimeSlotHeader(slot, project.resolution)}
-                  </span>
-                </th>
-              ))}
+              {timeSlots.map((slot, i) => {
+                const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
+                return (
+                  <th 
+                    key={i}
+                    className={cn('time-slot-header bg-paper-cream z-10', isCurrent && 'time-slot-current')}
+                  >
+                    <span className="font-mono text-[10px] text-ink-faded">
+                      {formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}
+                    </span>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
 
           <tbody>
-            {tasksWithData.map((task) => (
+            {filteredTasks.map((task) => (
               <TaskRows
                 key={task.id}
                 task={task}
@@ -888,14 +992,14 @@ export function PlanningGrid() {
             
             {/* New Task Row - only show if user can edit */}
             {hasEditPermission && (
-              <tr className="border-t border-paper-lines hover:bg-paper-warm/50">
+              <tr className="planvas-row-top hover:bg-paper-warm/50">
                 <td 
                   className="sticky bg-surface z-20 border-r border-paper-lines"
                   style={{ left: 0, width: ID_COLUMN_WIDTH }}
                 />
                 <td 
                   colSpan={2}
-                  className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-2"
+                  className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-2"
                   style={{ left: taskColumnLeft }}
                 >
                   <div className="flex items-center gap-2">
@@ -911,17 +1015,22 @@ export function PlanningGrid() {
                     />
                   </div>
                 </td>
-                <td colSpan={3 + extraColCount + timeSlots.length} className="border-r border-paper-lines"></td>
+                <td colSpan={3 + extraColCount} className="border-r border-paper-lines"></td>
+                {timeSlots.map((slot, i) => {
+                  const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
+                  return (
+                    <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')} />
+                  )
+                })}
               </tr>
             )}
           </tbody>
         </table>
       </div>
-    </div>
 
     {/* Resource Summary Section */}
     {resourceSummaryByName.length > 0 && (
-      <div className="paper-card overflow-hidden mt-4">
+      <div className="paper-card planvas-grid-card">
         <div 
           className="flex items-center justify-between px-4 py-2 bg-paper-warm/50 border-b border-paper-lines cursor-pointer"
           onClick={() => setShowResourceSummary(!showResourceSummary)}
@@ -940,15 +1049,17 @@ export function PlanningGrid() {
         </div>
         
         {showResourceSummary && (
-          <div className="overflow-x-auto">
+          <div>
             <table 
-              className="border-collapse w-full"
+              className="planvas-sticky-head w-full"
               style={{ 
                 tableLayout: 'fixed',
-                minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + (timeSlots.length * 28)
+                minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * 28)
               }}
             >
-              {/* Colgroup must match main table exactly for column alignment */}
+              {/* Colgroup must match main table exactly for column alignment.
+                  Custom columns + the add-column control are mirrored as empty
+                  placeholder columns so the time slots stay flush with the table above. */}
               <colgroup>
                 <col style={{ width: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth - MIN_ALLOCATION_WIDTH - MAX_ALLOCATION_WIDTH }} />
                 <col style={{ width: MIN_ALLOCATION_WIDTH }} />
@@ -956,15 +1067,20 @@ export function PlanningGrid() {
                 <col style={{ width: START_COLUMN_WIDTH }} />
                 <col style={{ width: END_COLUMN_WIDTH }} />
                 <col style={{ width: SUM_COLUMN_WIDTH }} />
+                {/* Placeholder columns mirroring the main table's custom columns */}
+                {sortedCustomColumns.map((col) => (
+                  <col key={col.id} style={{ width: getColWidth(col) }} />
+                ))}
+                {showAddColumn && <col style={{ width: ADD_COL_WIDTH }} />}
                 {timeSlots.map((_, i) => (
                   <col key={i} />
                 ))}
               </colgroup>
 
               <thead>
-                <tr className="border-b border-paper-lines">
+                <tr ref={summaryHeadRow1Ref} className="border-b border-paper-lines">
                   <th 
-                    className="sticky bg-paper-cream z-20 border-r border-paper-lines text-left px-3 py-2"
+                    className="planvas-freeze-edge sticky bg-paper-cream z-30 border-r border-paper-lines text-left px-3 py-2"
                     style={{ left: 0 }}
                   >
                     <span className="font-hand text-ink-light">{t('grid', 'resourceSum')}</span>
@@ -984,6 +1100,11 @@ export function PlanningGrid() {
                   <th className="bg-paper-cream z-10 border-r border-paper-lines text-center px-2 py-2">
                     <span className="font-hand text-xs text-ink-faded">{t('grid', 'total')}</span>
                   </th>
+                  {/* Empty placeholder headers to mirror custom columns of the table above */}
+                  {sortedCustomColumns.map((col) => (
+                    <th key={col.id} className="bg-paper-cream z-10 border-r border-paper-lines" />
+                  ))}
+                  {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines" />}
                   {/* Time slots grouped by month/year with navigation */}
                   {slotGroups.map((group, groupIndex) => (
                     <th 
@@ -1035,7 +1156,7 @@ export function PlanningGrid() {
                 </tr>
                 <tr className="border-b-2 border-paper-lines">
                   <th 
-                    className="sticky bg-paper-cream z-20 border-r border-paper-lines"
+                    className="planvas-freeze-edge sticky bg-paper-cream z-30 border-r border-paper-lines"
                     style={{ left: 0 }}
                   />
                   <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
@@ -1043,16 +1164,24 @@ export function PlanningGrid() {
                   <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
                   <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
                   <th className="bg-paper-cream z-10 border-r border-paper-lines"></th>
-                  {timeSlots.map((slot, i) => (
-                    <th 
-                      key={i}
-                      className="time-slot-header bg-paper-cream z-10"
-                    >
-                      <span className="font-mono text-[10px] text-ink-faded">
-                        {formatTimeSlotHeader(slot, project.resolution)}
-                      </span>
-                    </th>
+                  {/* Empty placeholder sub-headers mirroring custom columns */}
+                  {sortedCustomColumns.map((col) => (
+                    <th key={col.id} className="bg-paper-cream z-10 border-r border-paper-lines" />
                   ))}
+                  {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines" />}
+                  {timeSlots.map((slot, i) => {
+                    const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
+                    return (
+                      <th 
+                        key={i}
+                        className={cn('time-slot-header bg-paper-cream z-10', isCurrent && 'time-slot-current')}
+                      >
+                        <span className="font-mono text-[10px] text-ink-faded">
+                          {formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}
+                        </span>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
 
@@ -1063,6 +1192,8 @@ export function PlanningGrid() {
                     summary={summary}
                     timeSlots={timeSlots}
                     resolution={project.resolution}
+                    customColumns={sortedCustomColumns}
+                    showAddColumn={showAddColumn}
                     summaryColumnWidth={ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth - MIN_ALLOCATION_WIDTH - MAX_ALLOCATION_WIDTH}
                     minAllocation={minAllocationByResource.get(summary.name) ?? 0}
                     maxAllocation={maxAllocationByResource.get(summary.name) ?? 100}
@@ -1088,6 +1219,7 @@ export function PlanningGrid() {
         )}
       </div>
     )}
+      </div>
     </>
   )
 }
@@ -1143,6 +1275,7 @@ function TaskRows({
 }: TaskRowsProps) {
   const { t } = useTranslation()
   const extraColCount = customColumns.length + (showAddColumn ? 1 : 0)
+  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [newResourceName, setNewResourceName] = useState('')
   const [editingTaskName, setEditingTaskName] = useState(false)
   const [editingDisplayId, setEditingDisplayId] = useState(false)
@@ -1235,10 +1368,10 @@ function TaskRows({
   return (
     <>
       {/* Task Row (Parent/Header) */}
-      <tr className="bg-paper-warm/30 border-t border-paper-lines group">
+      <tr className="planvas-row-top bg-paper-warm/30 group">
         {/* ID Column */}
         <td 
-          className="sticky bg-paper-warm/50 z-20 border-r border-paper-lines px-2 py-2 text-center"
+          className="sticky bg-paper-warm z-20 border-r border-paper-lines px-2 py-2 text-center"
           style={{ left: 0, width: ID_COLUMN_WIDTH }}
         >
           {editingDisplayId && canEdit ? (
@@ -1268,7 +1401,7 @@ function TaskRows({
         
         {/* Task Name */}
         <td 
-          className="sticky bg-paper-warm/50 z-20 border-r border-paper-lines px-3 py-2 overflow-hidden"
+          className="sticky bg-paper-warm z-20 border-r border-paper-lines px-3 py-2 overflow-hidden"
           style={{ left: taskColumnLeft, width: taskColumnWidth }}
         >
           <div className="flex items-center gap-2 min-w-0">
@@ -1329,7 +1462,7 @@ function TaskRows({
         
         {/* Empty resource cell for task row */}
         <td 
-          className="sticky bg-paper-warm/50 z-20 border-r border-paper-lines"
+          className="planvas-freeze-edge sticky bg-paper-warm z-20 border-r border-paper-lines"
           style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
         />
         
@@ -1375,9 +1508,10 @@ function TaskRows({
           const slotKey = dateToSlotKey(slot, resolution)
           const slotData = taskAllocationBySlot.get(slotKey)
           const hasValue = slotData && slotData.total > 0
+          const isCurrent = slotKey === currentSlotKey
           
           return (
-            <td key={i} className="time-slot-cell p-0">
+            <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')}>
               <div className="allocation-cell">
                 <div
                   className={cn(
@@ -1442,7 +1576,7 @@ function TaskRows({
                 style={{ left: taskColumnLeft, width: taskColumnWidth }}
               />
               <td 
-                className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1 overflow-hidden"
+                className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-1 overflow-hidden"
                 style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
               >
                 <div className="flex items-center gap-2 pl-4 min-w-0">
@@ -1458,7 +1592,13 @@ function TaskRows({
                   />
                 </div>
               </td>
-              <td colSpan={3 + extraColCount + timeSlots.length}></td>
+              <td colSpan={3 + extraColCount}></td>
+              {timeSlots.map((slot, i) => {
+                const isCurrent = dateToSlotKey(slot, resolution) === currentSlotKey
+                return (
+                  <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')} />
+                )
+              })}
             </tr>
           )}
         </>
@@ -1507,6 +1647,7 @@ function ResourceRow({
   onSetCustomValue,
 }: ResourceRowProps) {
   const { t } = useTranslation()
+  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [isEditing, setIsEditing] = useState(false)
   const [name, setName] = useState(resource.name)
 
@@ -1551,7 +1692,7 @@ function ResourceRow({
       
       {/* Resource Name */}
       <td 
-        className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
+        className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
         style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
       >
         <div className="flex items-center gap-2 pl-4 min-w-0">
@@ -1638,9 +1779,10 @@ function ResourceRow({
       {timeSlots.map((slot, i) => {
         const slotKey = dateToSlotKey(slot, resolution)
         const allocation = resource.allocationMap.get(slotKey)
+        const isCurrent = slotKey === currentSlotKey
         
         return (
-          <td key={i} className="time-slot-cell p-0">
+          <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')}>
             <div className="allocation-cell">
               <div
                 className={cn(
@@ -1685,6 +1827,8 @@ interface ResourceSummaryRowProps {
   }
   timeSlots: Date[]
   resolution: 'day' | 'week' | 'month' | 'year'
+  customColumns: CustomColumn[]
+  showAddColumn: boolean
   summaryColumnWidth: number
   minAllocation: number
   maxAllocation: number
@@ -1696,6 +1840,8 @@ function ResourceSummaryRow({
   summary,
   timeSlots,
   resolution,
+  customColumns,
+  showAddColumn,
   summaryColumnWidth,
   minAllocation,
   maxAllocation,
@@ -1703,6 +1849,7 @@ function ResourceSummaryRow({
   onMaxAllocationChange,
 }: ResourceSummaryRowProps) {
   const { t } = useTranslation()
+  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [isEditingMin, setIsEditingMin] = useState(false)
   const [isEditingMax, setIsEditingMax] = useState(false)
   const [minInputValue, setMinInputValue] = useState(String(minAllocation))
@@ -1770,7 +1917,7 @@ function ResourceSummaryRow({
     )}>
       {/* Resource Name - first column */}
       <td 
-        className="sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
+        className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
         style={{ left: 0, width: summaryColumnWidth }}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -1866,6 +2013,12 @@ function ResourceSummaryRow({
           {summary.totalEffort > 0 ? `${summary.totalEffort}%` : '—'}
         </span>
       </td>
+
+      {/* Empty placeholder cells mirroring the custom columns of the table above */}
+      {customColumns.map((col) => (
+        <td key={col.id} className="border-r border-paper-lines" />
+      ))}
+      {showAddColumn && <td className="border-l border-paper-lines" />}
       
       {/* Allocation Cells */}
       {timeSlots.map((slot, i) => {
@@ -1875,9 +2028,10 @@ function ResourceSummaryRow({
         const isOverallocated = slotData && slotData.total > maxAllocation
         const isUnderallocated = minAllocation > 0 && slotData && slotData.total > 0 && slotData.total < minAllocation
         const mixedColor = slotData ? mixColors(slotData.colorData) : undefined
+        const isCurrent = slotKey === currentSlotKey
         
         return (
-          <td key={i} className="time-slot-cell p-0">
+          <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')}>
             <div className="allocation-cell">
               <div
                 className={cn(

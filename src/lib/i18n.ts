@@ -290,6 +290,9 @@ export const translations = {
     oneYear: { de: '1 Jahr', en: '1 year' },
     fourMonths: { de: '4 Monate', en: '4 months' },
     oneMonth: { de: '1 Monat', en: '1 month' },
+    filterColumn: { de: 'Spalte filtern', en: 'Filter column' },
+    clearFilter: { de: 'Filter zurücksetzen', en: 'Clear filter' },
+    noFilterValues: { de: 'Keine Werte vorhanden', en: 'No values available' },
   },
 
   // Custom Columns

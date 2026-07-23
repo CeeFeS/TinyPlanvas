@@ -99,6 +99,7 @@ export default function ProjectPage() {
     }
   }, [user?.name, project, initializePresence])
 
+
   // Show loading state while checking auth
   if (isAuthLoading) {
     return (
@@ -178,29 +179,28 @@ export default function ProjectPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="h-screen flex flex-col overflow-hidden">
       <Header 
         showProjectsLink
         projectName={project.name}
       />
-      
-      <main className="px-6 py-4">
-        {/* Error Toast */}
-        {error && (
-          <div className="fixed bottom-4 right-4 z-50 bg-red-50 border border-red-200 rounded-lg p-4 shadow-lg max-w-sm">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-red-800">{t('common', 'error')}</p>
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
+
+      {/* Error Toast */}
+      {error && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-50 border border-red-200 rounded-lg p-4 shadow-lg max-w-sm">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-red-800">{t('common', 'error')}</p>
+              <p className="text-sm text-red-600">{error}</p>
             </div>
           </div>
-        )}
-        
-        {/* Project Header Info */}
-        <div className="w-full mb-4">
-          <div className="paper-card p-4">
+        </div>
+      )}
+
+      {/* Project Header Info - always-visible bar above the scroll area */}
+      <div className="flex-none">
+        <div className="paper-card planvas-flush p-4">
             <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
               {/* Project Info */}
               <div className="flex items-center gap-4">
@@ -294,12 +294,11 @@ export default function ProjectPage() {
               )}
             </div>
           </div>
-        </div>
-        
-        {/* Main Planning Grid */}
-        <div className="w-full">
-          <PlanningGrid />
-        </div>
+      </div>
+
+      {/* Main Planning Grid - the single scroll region */}
+      <main className="flex-1 min-h-0 pb-4 flex flex-col">
+        <PlanningGrid />
       </main>
     </div>
   )

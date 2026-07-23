@@ -95,7 +95,10 @@
 html,
 body {
   max-width: 100vw;
-  overflow-x: hidden;
+  /* Use `clip` (not `hidden`) so the page still prevents horizontal scrolling
+     WITHOUT turning <body> into a scroll container - otherwise `position: sticky`
+     (project info bar, app header) would stop sticking to the viewport. */
+  overflow-x: clip;
 }
 
 body {
@@ -155,16 +158,32 @@ body {
 }
 
 /* ==================== Card & Paper Elements ==================== */
+/*
+ * Flat, modern surfaces: a crisp 1px border defines the card instead of a drop
+ * shadow, so nothing appears to "float" above the page.
+ */
 .paper-card {
   background: var(--surface);
-  border-radius: 4px;
-  box-shadow: var(--shadow-paper);
+  border-radius: 6px;
   border: 1px solid var(--paper-lines);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.paper-card:hover {
-  box-shadow: var(--shadow-paper-hover);
+/*
+ * Full-bleed, connected variants for the project detail view: square corners so
+ * stacked, edge-to-edge components meet seamlessly (no notch, no gap).
+ */
+.paper-card.planvas-flush {
+  border-radius: 0;
+}
+/*
+ * The grid + summary cards additionally drop their TOP border & radius. That top
+ * border would otherwise scroll out of view beneath the sticky header and
+ * re-appear at scroll-top, making the topmost line flicker. The always-visible
+ * component above (info bar / grid) provides the stable top edge instead.
+ */
+.paper-card.planvas-grid-card {
+  border-top: 0;
+  border-radius: 0;
 }
 
 .paper-card-lifted {
@@ -587,6 +606,110 @@ table.w-full .time-slot-col {
 
 .time-slot-header:first-of-type {
   border-left: 1px solid var(--paper-lines);
+}
+
+/* ==================== Sticky Grid Header ==================== */
+/*
+ * Robust sticky header via the SEPARATED border model.
+ *
+ * With `border-collapse: collapse`, the shared borders of a `position: sticky`
+ * cell are painted by the <table>, not by the cell - so they scroll away once
+ * the cell is pinned, leaving see-through 1px seams in the header and making the
+ * "today" outline (and other lines) flicker/vanish while scrolling or hovering.
+ *
+ * In the separated model (`border-collapse: separate; border-spacing: 0`) every
+ * cell owns its border AND background, so both travel with the cell when pinned
+ * and stay perfectly opaque. This also makes `box-shadow` on sticky cells fully
+ * reliable (used for the elevation + frozen-column shadows below).
+ *
+ * NOTE: in the separated model, borders set on <tr>/<thead>/<tbody> are ignored
+ * by the browser - only CELL borders render. The few horizontal separators that
+ * previously lived on rows are therefore re-created on the cells here.
+ *
+ * `--row1-h` (the height of the first header row) is published per-table on the
+ * <table> element by a ResizeObserver in the grid component, so the second
+ * header row pins directly beneath the first in both the grid and the summary.
+ */
+.planvas-sticky-head {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.planvas-sticky-head thead th {
+  position: sticky;
+  /* Opaque background: scrolled content can never bleed through the header. */
+  background: var(--paper-cream);
+}
+.planvas-sticky-head thead tr:first-child th {
+  top: 0;
+  border-bottom: 1px solid var(--paper-lines);
+}
+.planvas-sticky-head thead tr:nth-child(2) th {
+  top: var(--row1-h, 34px);
+  border-bottom: 2px solid var(--paper-lines);
+}
+/* Grouping rows (task / new-task) carry their top separator on their cells, as
+ * <tr> borders do not paint in the separated model. */
+.planvas-sticky-head tbody tr.planvas-row-top > td {
+  border-top: 1px solid var(--paper-lines);
+}
+
+/* ---------- Frozen columns: flat separator (no floating shadow) -------------- */
+/*
+ * The right-most frozen (sticky-left) cell gets a crisp 2px border so the pinned
+ * columns are clearly delimited from the scrolling data - flat, not floating.
+ */
+.planvas-freeze-edge {
+  border-right: 2px solid var(--paper-lines);
+}
+
+/* ---------- Column crosshair: highlight the hovered column up to the header --- */
+/*
+ * A subtle vertical band that connects the cell under the cursor all the way up
+ * through the (sticky) column header, so you always know exactly which column
+ * you are looking at - even hundreds of rows down. Pure CSS, no re-renders.
+ *
+ * The band only extends UPWARD (top: -100vh) so it can never enlarge the
+ * scrollable area of the region. `z-index: 5` keeps it above the plain cell
+ * backgrounds while staying BELOW every sticky element (header z-10/30, frozen
+ * columns z-20/30) so it can never cover the header labels or their borders.
+ */
+.time-slot-cell {
+  position: relative;
+}
+.time-slot-cell:hover::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: -100vh;
+  background: rgb(var(--ink-blue-rgb) / 0.05);
+  pointer-events: none;
+  z-index: 5;
+}
+.dark .time-slot-cell:hover::before {
+  background: rgb(var(--ink-blue-rgb) / 0.10);
+}
+
+/* ==================== Current Time Column Highlight ==================== */
+/* Subtle, dashed red frame running continuously down the column of "today". */
+.time-slot-current {
+  border-left: 1px dashed rgb(var(--ink-red-rgb) / 0.6) !important;
+  border-right: 1px dashed rgb(var(--ink-red-rgb) / 0.6) !important;
+}
+/*
+ * The "today" HEADER cell must stay fully opaque while pinned - otherwise the
+ * scrolling content shows through its light-red tint. Layer the translucent red
+ * ON TOP of an opaque paper background (a solid color + a tint gradient) so the
+ * result is opaque yet still carries the subtle red highlight.
+ */
+.time-slot-header.time-slot-current {
+  border-top: 1px dashed rgb(var(--ink-red-rgb) / 0.6);
+  background-color: var(--paper-cream);
+  background-image: linear-gradient(
+    rgb(var(--ink-red-rgb) / 0.08),
+    rgb(var(--ink-red-rgb) / 0.08)
+  );
 }
 
 /* ==================== Utility Classes ==================== */
