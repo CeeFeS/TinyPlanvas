@@ -107,6 +107,8 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 | 🎨 **Color-Coded Workload** | Visual heatmap with exact percentages shown right on each cell |
 | 🚦 **Project Priorities** | Flag projects as Immediate, High, Medium, Low or On Hold with color coding |
 | 📝 **Custom Columns** | Add free-text, Markdown-rendered columns to any task or resource — resizable widths |
+| 🔍 **Column Filters** | Filter the grid by task or resource with quick per-column dropdowns |
+| 📌 **Sticky Headers** | Opaque, flicker-free sticky headers & frozen columns keep context while scrolling |
 | 🌙 **Dark Mode** | Light, dark, or follow-system theme with full-width, no-margin layout |
 | 👥 **Real-time Collaboration** | See changes from teammates live with PocketBase subscriptions |
 | 🔐 **User & Permission System** | Share projects with view or edit access |
@@ -126,8 +128,8 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/yourusername/tinyplanvas.git
-cd tinyplanvas
+git clone https://github.com/CeeFeS/TinyPlanvas.git
+cd TinyPlanvas
 npm install
 ```
 
@@ -157,8 +159,8 @@ TinyPlanvas is designed for easy self-hosting with Docker Compose. Here's how to
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/tinyplanvas.git
-cd tinyplanvas
+git clone https://github.com/CeeFeS/TinyPlanvas.git
+cd TinyPlanvas
 
 # 2. (Optional) Configure environment
 #    Create .env file for custom settings
@@ -189,8 +191,8 @@ docker compose up -d --build
 #### 2. Clone Repository
 
 ```bash
-git clone https://github.com/yourusername/tinyplanvas.git
-cd tinyplanvas
+git clone https://github.com/CeeFeS/TinyPlanvas.git
+cd TinyPlanvas
 ```
 
 #### 3. Configure Environment (Optional)
@@ -274,7 +276,7 @@ We have exciting features planned for TinyPlanvas! Here's what's coming:
 
 | Status | Feature | Description |
 |:------:|---------|-------------|
-| ✅ | **UI Improvements** | Full-width layout, larger color-coded cells, project priorities & custom columns |
+| ✅ | **UI Improvements** | Full-width flat layout, larger color-coded cells, project priorities, custom columns, column filters & robust sticky headers |
 | ✅ | **Dark Mode** | Easy on the eyes for late-night planning sessions 🌙 |
 | 🔲 | **REST API** | Public API endpoints for integrations and automation |
 | 🔲 | **Export: PDF** | Generate beautiful PDF reports of your project plans |
@@ -357,6 +359,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 *If you find TinyPlanvas useful, consider giving it a ⭐ on GitHub!*
 
-[🐛 Report Bug](https://github.com/yourusername/tinyplanvas/issues) · [💡 Request Feature](https://github.com/yourusername/tinyplanvas/issues)
+[🐛 Report Bug](https://github.com/CeeFeS/TinyPlanvas/issues) · [💡 Request Feature](https://github.com/CeeFeS/TinyPlanvas/issues)
 
 </div>
