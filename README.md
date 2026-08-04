@@ -112,6 +112,7 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 | 🌙 **Dark Mode** | Light, dark, or follow-system theme with full-width, no-margin layout |
 | 👥 **Real-time Collaboration** | See changes from teammates live with PocketBase subscriptions |
 | 🔐 **User & Permission System** | Share projects with view or edit access |
+| 🔗 **Public Share Links** | View-only links (`/share/[token]`) — no account required |
 | 📱 **Responsive Design** | Works beautifully on desktop and tablet |
 | 🌍 **Multi-Language** | Built-in i18n support (German & English) |
 | 🐳 **One-Command Deploy** | Docker Compose setup for instant production deployment |
@@ -278,6 +279,7 @@ We have exciting features planned for TinyPlanvas! Here's what's coming:
 |:------:|---------|-------------|
 | ✅ | **UI Improvements** | Full-width flat layout, larger color-coded cells, project priorities, custom columns, column filters & robust sticky headers |
 | ✅ | **Dark Mode** | Easy on the eyes for late-night planning sessions 🌙 |
+| ✅ | **Public Share Links** | View-only project links for stakeholders without an account |
 | 🔲 | **REST API** | Public API endpoints for integrations and automation |
 | 🔲 | **Export: PDF** | Generate beautiful PDF reports of your project plans |
 | 🔲 | **Export: XLSX** | Excel-compatible exports for stakeholder reporting |

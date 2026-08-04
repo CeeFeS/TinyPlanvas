@@ -68,6 +68,10 @@ export interface Project extends BaseRecord {
   start_date: string // ISO Date string
   end_date: string   // ISO Date string
   priority?: Priority
+  /** Public view-only share link toggle */
+  share_enabled?: boolean
+  /** Cryptographically random token used in /share/[token] */
+  share_token?: string
 }
 
 export interface Task extends BaseRecord {
@@ -177,14 +181,17 @@ export interface BrushConfig {
   colorHex: string // Grundfarbe - Opacity wird aus percentage berechnet
 }
 
-// Vordefinierte Prozent-Werte (nicht löschbar)
+// Startwerte für den Pinsel (alle löschbar; werden in localStorage persistiert)
 export const DEFAULT_PERCENTAGES = [25, 50, 75, 100] as const
 
 // Standard-Grundfarbe
 export const DEFAULT_BASE_COLOR = '#30A14E'
 
-// Maximum number of custom percentage presets
-export const MAX_CUSTOM_PRESETS = 10
+// Max. Presets = Nummern-Hotkeys 1–9 und 0
+export const MAX_PERCENTAGE_PRESETS = 10
+
+/** @deprecated Use MAX_PERCENTAGE_PRESETS */
+export const MAX_CUSTOM_PRESETS = MAX_PERCENTAGE_PRESETS
 
 // Color Palette für Custom Colors
 export const COLOR_PALETTE = [

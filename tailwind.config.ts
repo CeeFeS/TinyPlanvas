@@ -59,12 +59,12 @@ const config: Config = {
         },
       },
       fontFamily: {
-        // Handwritten feel for headers
-        hand: ['var(--font-kalam)', 'cursive'],
-        // Clean sans for data
-        sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
+        // Modern serif for titles (next/font Source Serif 4; Times-like fallbacks)
+        hand: ['var(--font-source-serif)', '"Times New Roman"', 'Times', 'Georgia', 'serif'],
+        // Clean sans for UI / data
+        sans: ['var(--font-source-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         // Monospace for numbers
-        mono: ['var(--font-mono)', 'monospace'],
+        mono: ['var(--font-jetbrains)', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
         'paper': '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)',

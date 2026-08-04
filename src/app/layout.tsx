@@ -1,28 +1,31 @@
 import type { Metadata } from 'next'
-import { Kalam, Source_Sans_3, JetBrains_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import { Providers } from '@/components/providers'
 import { THEME_INIT_SCRIPT } from '@/lib/theme-context'
 
-// Handschrift-Font für Überschriften
-const kalam = Kalam({
-  weight: ['400', '700'],
-  subsets: ['latin'],
-  variable: '--font-kalam',
+// Self-hosted (bundled) fonts — avoids fonts.googleapis.com fetches during Docker/CI builds.
+const sourceSerif = localFont({
+  src: './fonts/source-serif-4-latin-wght-normal.woff2',
+  weight: '200 900',
+  style: 'normal',
+  variable: '--font-source-serif',
   display: 'swap',
 })
 
-// Clean Sans für Daten
-const sourceSans = Source_Sans_3({
-  subsets: ['latin'],
-  variable: '--font-sans',
+const sourceSans = localFont({
+  src: './fonts/source-sans-3-latin-wght-normal.woff2',
+  weight: '200 900',
+  style: 'normal',
+  variable: '--font-source-sans',
   display: 'swap',
 })
 
-// Mono für Zahlen
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-mono',
+const jetbrainsMono = localFont({
+  src: './fonts/jetbrains-mono-latin-wght-normal.woff2',
+  weight: '100 800',
+  style: 'normal',
+  variable: '--font-jetbrains',
   display: 'swap',
 })
 
@@ -39,13 +42,13 @@ export default function RootLayout({
   return (
     <html 
       lang="de" 
-      className={`${kalam.variable} ${sourceSans.variable} ${jetbrainsMono.variable}`}
+      className={`${sourceSerif.variable} ${sourceSans.variable} ${jetbrainsMono.variable}`}
       suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="antialiased">
+      <body className={`${sourceSans.className} antialiased`}>
         <Providers>
           {children}
         </Providers>

@@ -1,11 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronLeft, Plus, Settings, User, Shield, LogOut, Sun, Moon } from 'lucide-react'
+import { ChevronLeft, Plus, Settings, Shield, LogOut, Sun, Moon, Globe } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
-import { useTranslation } from '@/lib/language-context'
+import { useLanguage } from '@/lib/language-context'
 import { useTheme } from '@/lib/theme-context'
 import { SettingsModal } from '@/components/settings/settings-modal'
 
@@ -13,15 +13,33 @@ interface HeaderProps {
   onNewProject?: () => void
   projectName?: string
   showProjectsLink?: boolean
+  /** When false, hides the "New project" CTA (e.g. while inside a project). Defaults to true. */
+  showNewProject?: boolean
+  /**
+   * Public share / guest chrome: hide account menu, settings, and "new project"
+   * even if a session exists in this browser.
+   */
+  variant?: 'app' | 'public'
 }
 
-export function Header({ onNewProject, projectName, showProjectsLink }: HeaderProps) {
+export function Header({
+  onNewProject,
+  projectName,
+  showProjectsLink,
+  showNewProject = true,
+  variant = 'app',
+}: HeaderProps) {
   const router = useRouter()
   const { user, isAuthenticated, isAdmin, logout } = useAuth()
-  const { t } = useTranslation()
+  const { t, language, setLanguage } = useLanguage()
   const { resolvedTheme, toggleTheme } = useTheme()
   const [showSettings, setShowSettings] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const isPublic = variant === 'public'
+
+  const toggleLanguage = () => {
+    setLanguage(language === 'de' ? 'en' : 'de')
+  }
 
   const handleNewProject = () => {
     if (onNewProject) {
@@ -37,7 +55,7 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
         <div className="h-full px-6 flex items-center justify-between w-full">
           {/* Left section */}
           <div className="flex items-center gap-3">
-            {showProjectsLink && (
+            {!isPublic && showProjectsLink && (
               <Link
                 href="/"
                 className="flex items-center gap-1 text-ink-light hover:text-ink transition-colors group"
@@ -47,7 +65,7 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
               </Link>
             )}
             
-            <Link href="/" className="flex items-center gap-2 group">
+            <div className="flex items-center gap-2">
               {/* Logo - simple paper/canvas icon */}
               <div className="w-8 h-8 rounded bg-gradient-to-br from-chip-green-200 to-chip-green-400 flex items-center justify-center shadow-sm">
                 <svg 
@@ -64,16 +82,22 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
                 </svg>
               </div>
               
-              <span className="font-hand text-xl text-ink group-hover:text-ink-blue transition-colors">
-                TinyPlanvas
-              </span>
-            </Link>
+              {isPublic ? (
+                <span className="font-hand text-2xl text-ink leading-none">
+                  TinyPlanvas
+                </span>
+              ) : (
+                <Link href="/" className="font-hand text-2xl text-ink group-hover:text-ink-blue transition-colors leading-none hover:text-ink-blue">
+                  TinyPlanvas
+                </Link>
+              )}
+            </div>
           </div>
 
           {/* Center - Project name (wenn vorhanden) */}
           {projectName && (
             <div className="absolute left-1/2 -translate-x-1/2 hidden md:block">
-              <h1 className="font-hand text-lg text-ink-light">
+              <h1 className="font-hand text-xl text-ink leading-tight">
                 {projectName}
               </h1>
             </div>
@@ -81,7 +105,20 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
 
           {/* Right section */}
           <div className="flex items-center gap-2">
-            {/* Theme Toggle */}
+            {/* Language toggle for public share (no settings menu there) */}
+            {isPublic && (
+              <button
+                onClick={toggleLanguage}
+                className="btn-icon gap-1 w-auto px-2 text-xs font-semibold tracking-wide"
+                aria-label={t('header', 'toggleLanguage')}
+                title={t('header', 'toggleLanguage')}
+              >
+                <Globe size={16} />
+                <span>{language === 'de' ? 'DE' : 'EN'}</span>
+              </button>
+            )}
+
+            {/* Theme Toggle — also useful on public shares */}
             <button
               onClick={toggleTheme}
               className="btn-icon"
@@ -91,7 +128,7 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
               {resolvedTheme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
-            {isAuthenticated && (
+            {!isPublic && isAuthenticated && showNewProject && (
               <button 
                 onClick={handleNewProject}
                 className="btn-notebook text-sm"
@@ -101,8 +138,8 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
               </button>
             )}
             
-            {/* User Menu */}
-            {isAuthenticated && user && (
+            {/* User Menu — never on public share pages */}
+            {!isPublic && isAuthenticated && user && (
               <div className="relative">
                 <button 
                   onClick={() => setShowUserMenu(!showUserMenu)}
@@ -176,8 +213,8 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
               </div>
             )}
 
-            {/* Settings Button (fallback when no user menu) */}
-            {!isAuthenticated && (
+            {/* Settings Button (fallback when no user menu) — not on public shares */}
+            {!isPublic && !isAuthenticated && (
               <button 
                 className="btn-icon" 
                 aria-label={t('common', 'settings')}
@@ -191,7 +228,9 @@ export function Header({ onNewProject, projectName, showProjectsLink }: HeaderPr
       </header>
 
       {/* Settings Modal */}
-      <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      {!isPublic && (
+        <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      )}
     </>
   )
 }

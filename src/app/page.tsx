@@ -325,31 +325,31 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
         className="paper-card p-5 pl-6 hover:shadow-paper-hover transition-all cursor-pointer group relative overflow-hidden"
         style={{ borderLeft: `4px solid ${priorityMeta.color}` }}
       >
-        {/* Action Buttons */}
-        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {/* Share Button - nur für Besitzer */}
+        {/* Action Buttons — secondary icon actions, reveal on hover */}
+        <div className="absolute top-3 right-3 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {isOwner && (
             <button
               onClick={handleShare}
-              className="p-2 rounded-full bg-surface/80 hover:bg-ink-blue/10 hover:text-ink-blue transition-colors"
+              className="btn-icon bg-surface/90"
               title={t('dashboard', 'shareProject')}
+              aria-label={t('dashboard', 'shareProject')}
             >
-              <Share2 size={14} />
+              <Share2 size={16} />
             </button>
           )}
-          
-          {/* Delete Button - nur für Besitzer */}
+
           {isOwner && (
             <button
               onClick={onDelete}
               disabled={isDeleting}
-              className="p-2 rounded-full bg-surface/80 hover:bg-red-50 hover:text-red-500 disabled:opacity-50 transition-colors"
+              className="btn-icon bg-surface/90 hover:bg-red-50 hover:text-red-500 hover:border-red-200 disabled:opacity-50"
               title={t('dashboard', 'deleteProject')}
+              aria-label={t('dashboard', 'deleteProject')}
             >
               {isDeleting ? (
-                <Loader2 size={14} className="animate-spin" />
+                <Loader2 size={16} className="animate-spin" />
               ) : (
-                <Trash2 size={14} />
+                <Trash2 size={16} />
               )}
             </button>
           )}
@@ -393,7 +393,7 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
             </div>
             {/* Shared Badge - wenn nicht Besitzer */}
             {!isOwner && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-ink-blue/10 text-ink-blue text-xs">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-paper-warm text-ink-light text-xs border border-paper-lines">
                 <Share2 size={10} />
                 {t('dashboard', 'shared')}
               </span>

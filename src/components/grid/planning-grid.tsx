@@ -16,7 +16,13 @@ import {
 } from '@/lib/utils'
 import { format, parseISO, addYears, addMonths, startOfYear, startOfMonth, endOfYear, endOfMonth, isAfter, isBefore } from 'date-fns'
 import type { TaskWithAggregation, ResourceWithAllocations, Resolution, CustomColumn, CustomRowType } from '@/lib/types'
-import { CustomColumnCell, CustomColumnHeaderCell, AddColumnHeader } from './custom-column-cell'
+import {
+  CustomColumnCell,
+  CustomColumnHeaderCell,
+  AddColumnHeader,
+  CustomValueEditor,
+  type CustomCellEditTarget,
+} from './custom-column-cell'
 import { ColumnFilter } from './column-filter'
 
 // ==================== Time Window Configuration ====================
@@ -283,6 +289,23 @@ export function PlanningGrid() {
       setCustomValueAsync(columnId, rowType, rowId, value).catch(console.error)
     },
     [setCustomValueAsync]
+  )
+
+  // Bottom-split custom column editor (replaces modal)
+  const [editingCustomCell, setEditingCustomCell] = useState<CustomCellEditTarget | null>(null)
+
+  const handleOpenCustomCell = useCallback((target: CustomCellEditTarget) => {
+    setEditingCustomCell(target)
+  }, [])
+
+  const handleSaveCustomCell = useCallback(
+    (value: string) => {
+      if (!editingCustomCell) return
+      const { column, rowType, rowId } = editingCustomCell
+      handleSetCustomValue(column.id, rowType, rowId, value)
+      setEditingCustomCell(null)
+    },
+    [editingCustomCell, handleSetCustomValue]
   )
 
   const extraColsWidth =
@@ -632,10 +655,16 @@ export function PlanningGrid() {
   // Calculate fixed columns width (before time slots) - includes custom columns
   const fixedColumnsWidth = ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth
 
-  // Cursor follower handlers - only for paint area (time slots from column 7)
+  // Cursor follower handlers - only for paint area when user can edit
   const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!hasEditPermission) {
+      setIsOverPaintArea(false)
+      setCursorPos(null)
+      return
+    }
+
     setCursorPos({ x: e.clientX, y: e.clientY })
-    
+
     // Check if mouse is over the time slot area (right of the frozen columns)
     const scrollContainer = scrollRef.current
     if (scrollContainer) {
@@ -644,10 +673,11 @@ export function PlanningGrid() {
       const relativeX = e.clientX - scrollRect.left + scrollLeft
       setIsOverPaintArea(relativeX >= fixedColumnsWidth)
     }
-  }, [fixedColumnsWidth])
+  }, [fixedColumnsWidth, hasEditPermission])
 
   const handleGridMouseLeave = useCallback(() => {
     setIsOverPaintArea(false)
+    setCursorPos(null)
     setIsPainting(false)
   }, [setIsPainting])
 
@@ -702,9 +732,9 @@ export function PlanningGrid() {
   const stepLabel = t('grid', TIME_WINDOW_CONFIG[project.resolution].stepLabelKey)
 
   return (
-    <>
-      {/* Cursor Follower - shows current brush color (only over paint area) */}
-      {isOverPaintArea && cursorPos && (
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Cursor Follower - brush preview only when editing is allowed */}
+      {hasEditPermission && isOverPaintArea && cursorPos && (
         <div
           className="fixed pointer-events-none z-50 flex items-center gap-1.5"
           style={{
@@ -986,7 +1016,7 @@ export function PlanningGrid() {
                 customColumns={sortedCustomColumns}
                 showAddColumn={showAddColumn}
                 getCustomValue={getCustomValue}
-                onSetCustomValue={handleSetCustomValue}
+                onOpenCustomCell={handleOpenCustomCell}
               />
             ))}
             
@@ -1220,7 +1250,17 @@ export function PlanningGrid() {
       </div>
     )}
       </div>
-    </>
+
+      {editingCustomCell && (
+        <CustomValueEditor
+          columnName={editingCustomCell.column.name}
+          initialValue={editingCustomCell.value}
+          canEdit={editingCustomCell.canEdit}
+          onCancel={() => setEditingCustomCell(null)}
+          onSave={handleSaveCustomCell}
+        />
+      )}
+    </div>
   )
 }
 
@@ -1247,7 +1287,7 @@ interface TaskRowsProps {
   customColumns: CustomColumn[]
   showAddColumn: boolean
   getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
-  onSetCustomValue: (columnId: string, rowType: CustomRowType, rowId: string, value: string) => void
+  onOpenCustomCell: (target: CustomCellEditTarget) => void
 }
 
 function TaskRows({
@@ -1271,7 +1311,7 @@ function TaskRows({
   customColumns,
   showAddColumn,
   getCustomValue,
-  onSetCustomValue,
+  onOpenCustomCell,
 }: TaskRowsProps) {
   const { t } = useTranslation()
   const extraColCount = customColumns.length + (showAddColumn ? 1 : 0)
@@ -1498,7 +1538,7 @@ function TaskRows({
             canEdit={canEdit}
             width={col.width ?? CUSTOM_COL_WIDTH}
             variant="task"
-            onSave={(v) => onSetCustomValue(col.id, 'task', task.id, v)}
+            onOpen={onOpenCustomCell}
           />
         ))}
         {showAddColumn && <td className="bg-paper-warm/30 border-l border-paper-lines" />}
@@ -1560,7 +1600,7 @@ function TaskRows({
               customColumns={customColumns}
               showAddColumn={showAddColumn}
               getCustomValue={getCustomValue}
-              onSetCustomValue={onSetCustomValue}
+              onOpenCustomCell={onOpenCustomCell}
             />
           ))}
           
@@ -1625,7 +1665,7 @@ interface ResourceRowProps {
   customColumns: CustomColumn[]
   showAddColumn: boolean
   getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
-  onSetCustomValue: (columnId: string, rowType: CustomRowType, rowId: string, value: string) => void
+  onOpenCustomCell: (target: CustomCellEditTarget) => void
 }
 
 function ResourceRow({
@@ -1644,7 +1684,7 @@ function ResourceRow({
   customColumns,
   showAddColumn,
   getCustomValue,
-  onSetCustomValue,
+  onOpenCustomCell,
 }: ResourceRowProps) {
   const { t } = useTranslation()
   const currentSlotKey = dateToSlotKey(new Date(), resolution)
@@ -1770,7 +1810,7 @@ function ResourceRow({
           canEdit={canEdit}
           width={col.width ?? CUSTOM_COL_WIDTH}
           variant="resource"
-          onSave={(v) => onSetCustomValue(col.id, 'resource', resource.id, v)}
+          onOpen={onOpenCustomCell}
         />
       ))}
       {showAddColumn && <td className="border-l border-paper-lines" />}

@@ -35,10 +35,9 @@ export interface ProjectWithOwner extends Project {
 }
 
 /**
- * Fetch all projects the current user has access to.
- * Access is granted if:
- * 1. User is the owner (user_id matches)
- * 2. User has a permission entry in project_permissions (view or edit)
+ * Fetch projects the current user may access.
+ * Server-side PocketBase rules enforce owner / project_permissions;
+ * share_token is never returned for foreign projects.
  */
 export async function fetchProjects(): Promise<ProjectWithOwner[]> {
   const pb = getPocketBase()
@@ -48,21 +47,8 @@ export async function fetchProjects(): Promise<ProjectWithOwner[]> {
     return []
   }
   
-  // Fetch all projects (API rules already require auth)
-  const allProjects = await pb.collection('projects').getFullList<Project>()
-  
-  // Fetch user's permissions
-  const userPermissions = await pb.collection('project_permissions').getFullList<ProjectPermission>({
-    filter: `user_id = "${currentUser.id}"`,
-  })
-  
-  // Create set of project IDs user has permissions for
-  const permittedProjectIds = new Set(userPermissions.map(p => p.project_id))
-  
-  // Filter: user is owner OR has permission
-  const accessibleProjects = allProjects.filter(project => 
-    project.user_id === currentUser.id || permittedProjectIds.has(project.id)
-  )
+  // listRule already restricts to owned + explicitly shared projects
+  const accessibleProjects = await pb.collection('projects').getFullList<Project>()
   
   // Collect unique user IDs to fetch owner info
   const ownerIds = [...new Set(accessibleProjects.map(p => p.user_id).filter(Boolean))]
@@ -107,7 +93,13 @@ export async function createProject(data: CreateProjectDTO): Promise<Project> {
   })
 }
 
-export async function updateProject(id: string, data: Partial<CreateProjectDTO>): Promise<Project> {
+export async function updateProject(
+  id: string,
+  data: Partial<CreateProjectDTO> & {
+    share_enabled?: boolean
+    share_token?: string | null
+  }
+): Promise<Project> {
   const pb = getPocketBase()
   return await pb.collection('projects').update<Project>(id, data)
 }
@@ -115,6 +107,135 @@ export async function updateProject(id: string, data: Partial<CreateProjectDTO>)
 export async function deleteProject(id: string): Promise<boolean> {
   const pb = getPocketBase()
   return await pb.collection('projects').delete(id)
+}
+
+// ==================== Public Share Links ====================
+
+const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/
+
+/** Cryptographically random URL-safe token (~43 chars for 32 bytes). */
+export function generateShareToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function assertShareToken(token: string): string {
+  if (!SHARE_TOKEN_RE.test(token)) {
+    throw new Error('Ungültiger Share-Link')
+  }
+  return token
+}
+
+/** PocketBase list options plus `share_token` for API-rule matching. */
+function shareListOpts(token: string, extra: Record<string, unknown> = {}) {
+  const safe = assertShareToken(token)
+  return { ...extra, share_token: safe } as Record<string, unknown>
+}
+
+/**
+ * Enable (or re-enable) a public view-only share link for a project.
+ * Generates a new token if none exists yet.
+ */
+export async function enableProjectShareLink(projectId: string): Promise<Project> {
+  const project = await fetchProject(projectId)
+  const token = project.share_token && SHARE_TOKEN_RE.test(project.share_token)
+    ? project.share_token
+    : generateShareToken()
+  return updateProject(projectId, { share_enabled: true, share_token: token })
+}
+
+/** Disable the public share link (keeps token so re-enable restores the same URL). */
+export async function disableProjectShareLink(projectId: string): Promise<Project> {
+  return updateProject(projectId, { share_enabled: false })
+}
+
+/** Rotate the share token so previous links stop working. */
+export async function regenerateProjectShareLink(projectId: string): Promise<Project> {
+  return updateProject(projectId, {
+    share_enabled: true,
+    share_token: generateShareToken(),
+  })
+}
+
+/**
+ * Fetch a project + related data via public share token (no auth required).
+ * Always passes `share_token` as a query param so PocketBase list/view rules match.
+ */
+export async function fetchSharedProject(token: string): Promise<ProjectFullData> {
+  const pb = getPocketBase()
+  const safe = assertShareToken(token)
+
+  const projects = await pb.collection('projects').getFullList<Project>(
+    shareListOpts(safe, {
+      filter: `share_enabled=true && share_token="${safe}"`,
+    })
+  )
+
+  const project = projects[0]
+  if (!project) {
+    throw new Error('Share-Link ungültig oder deaktiviert')
+  }
+
+  const projectId = project.id
+
+  const tasks = await pb.collection('tasks').getFullList<Task>(
+    shareListOpts(safe, {
+      filter: `project_id = "${projectId}"`,
+      sort: 'sort_order',
+    })
+  )
+
+  let resources: Resource[] = []
+  if (tasks.length > 0) {
+    const taskFilter = tasks.map(t => `task_id = "${t.id}"`).join(' || ')
+    resources = await pb.collection('resources').getFullList<Resource>(
+      shareListOpts(safe, {
+        filter: taskFilter,
+        sort: 'sort_order',
+      })
+    )
+  }
+
+  let allocations: Allocation[] = []
+  if (resources.length > 0) {
+    const resourceFilter = resources.map(r => `resource_id = "${r.id}"`).join(' || ')
+    allocations = await pb.collection('allocations').getFullList<Allocation>(
+      shareListOpts(safe, {
+        filter: resourceFilter,
+        sort: 'date',
+      })
+    )
+  }
+
+  const customColumns = await pb.collection('custom_columns').getFullList<CustomColumn>(
+    shareListOpts(safe, {
+      filter: `project_id = "${projectId}"`,
+      sort: 'sort_order',
+    })
+  )
+
+  let customValues: CustomValue[] = []
+  if (customColumns.length > 0) {
+    const filter = customColumns.map(c => `column_id = "${c.id}"`).join(' || ')
+    customValues = await pb.collection('custom_values').getFullList<CustomValue>(
+      shareListOpts(safe, { filter })
+    )
+  }
+
+  return {
+    project,
+    tasks,
+    resources,
+    allocations,
+    customColumns,
+    customValues,
+    userPermission: 'view',
+  }
 }
 
 // ==================== Tasks API ====================

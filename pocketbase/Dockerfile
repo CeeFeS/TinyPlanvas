@@ -1,22 +1,25 @@
-FROM alpine:latest
+# Avoid `apk add` during build: Alpine package mirrors often fail with
+# TLS errors in constrained Docker environments. BusyBox already ships
+# unzip/wget; PocketBase is a static Go binary.
+FROM alpine:3.21 AS certs
+# Use CA bundle from the base image (no package install required)
+
+FROM busybox:1.36
 
 ARG PB_VERSION=0.36.1
 
-RUN apk add --no-cache \
-    unzip \
-    ca-certificates
+# TLS trust store for outbound HTTPS from PocketBase (OAuth, webhooks, etc.)
+COPY --from=certs /etc/ssl/certs/ /etc/ssl/certs/
 
-# download and unzip PocketBase
+# Docker host fetches this URL (not apk); unzip comes from busybox
 ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
-RUN unzip /tmp/pb.zip -d /pb/
+RUN mkdir -p /pb \
+    && unzip /tmp/pb.zip -d /pb/ \
+    && rm -f /tmp/pb.zip \
+    && chmod +x /pb/pocketbase
 
-# copy the local pb_migrations dir into the image
 COPY ./pb_migrations /pb/pb_migrations
-
-# copy the local pb_hooks dir into the image (if needed later)
-# COPY ./pb_hooks /pb/pb_hooks
 
 EXPOSE 8080
 
-# start PocketBase with auto-migrate
 CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8080"]

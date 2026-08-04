@@ -14,6 +14,11 @@ const PUBLIC_ROUTES = [
   '/', // Dashboard (hat eigene Auth-Logik für Login/Setup)
 ]
 
+// Prefix-Routen ohne Auth (öffentliche Share-Links)
+const PUBLIC_PREFIXES = [
+  '/share/',
+]
+
 // Statische Dateien und API-Routen ausschließen
 const EXCLUDED_PATHS = [
   '/_next',
@@ -35,6 +40,10 @@ export function middleware(request: NextRequest) {
   
   // Öffentliche Routen überspringen
   if (PUBLIC_ROUTES.includes(pathname)) {
+    return NextResponse.next()
+  }
+
+  if (PUBLIC_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
     return NextResponse.next()
   }
   

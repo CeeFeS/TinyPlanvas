@@ -41,20 +41,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-paper-lines bg-paper-warm/50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-paper-lines to-paper-warm flex items-center justify-center">
-              <Settings size={20} className="text-ink-light" />
-            </div>
-            <div>
-              <h2 className="font-hand text-xl text-ink">{t('settings', 'title')}</h2>
+          <div className="flex items-center gap-3 min-w-0">
+            <Settings size={18} className="text-ink-light flex-shrink-0" />
+            <div className="min-w-0">
+              <h2 className="font-hand text-xl text-ink leading-tight">{t('settings', 'title')}</h2>
               <p className="text-xs text-ink-faded">{t('settings', 'subtitle')}</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="btn-icon hover:bg-red-50 hover:text-red-500 hover:border-red-200"
+            className="btn-icon hover:bg-red-50 hover:text-red-500 hover:border-red-200 flex-shrink-0"
+            aria-label={t('common', 'close')}
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 

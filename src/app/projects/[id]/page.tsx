@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { BrushEditor } from '@/components/grid/brush-editor'
 import { PlanningGrid } from '@/components/grid/planning-grid'
+import { ShareProjectModal } from '@/components/project/share-modal'
 import { useProjectStore } from '@/store/project-store'
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
@@ -13,14 +14,15 @@ import { PrioritySelect } from '@/components/ui/priority-select'
 import * as api from '@/lib/pocketbase-api'
 import type { Priority } from '@/lib/types'
 import { format, parseISO } from 'date-fns'
-import { AlertCircle, Loader2, Users, Lock, Eye } from 'lucide-react'
+import { AlertCircle, Loader2, Users, Lock, Eye, Share2 } from 'lucide-react'
 
 export default function ProjectPage() {
   const params = useParams()
   const router = useRouter()
   const projectId = params.id as string
   const { isAuthenticated, isLoading: isAuthLoading, user } = useAuth()
-  const { t, language, dateLocale } = useTranslation()
+  const { t, dateLocale } = useTranslation()
+  const [showShareModal, setShowShareModal] = useState(false)
   
   const { 
     project, 
@@ -36,6 +38,8 @@ export default function ProjectPage() {
     canEdit,
     setProject,
   } = useProjectStore()
+
+  const isOwner = !!user && !!project && user.id === project.user_id
 
   // Update project priority (optimistic + persisted)
   const handlePriorityChange = async (priority: Priority) => {
@@ -182,6 +186,7 @@ export default function ProjectPage() {
     <div className="h-screen flex flex-col overflow-hidden">
       <Header 
         showProjectsLink
+        showNewProject={false}
         projectName={project.name}
       />
 
@@ -198,32 +203,26 @@ export default function ProjectPage() {
         </div>
       )}
 
-      {/* Project Header Info - always-visible bar above the scroll area */}
+      {/* Project meta + tool bar */}
       <div className="flex-none">
-        <div className="paper-card planvas-flush p-4">
-            <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-              {/* Project Info */}
-              <div className="flex items-center gap-4">
-                <div>
-                  <span className="text-xs text-ink-faded uppercase tracking-wide">{t('projectDetail', 'projectName')}</span>
-                  <h1 className="font-hand text-xl text-ink">{project.name}</h1>
-                </div>
-              </div>
-              
+        <div className="paper-card planvas-flush px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {/* Meta zone */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-ink-faded">{t('projectDetail', 'start')}:</span>
                 <span className="font-mono text-ink">
                   {format(parseISO(project.start_date), 'dd.MM.yyyy', { locale: dateLocale })}
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-ink-faded">{t('projectDetail', 'end')}:</span>
                 <span className="font-mono text-ink">
                   {format(parseISO(project.end_date), 'dd.MM.yyyy', { locale: dateLocale })}
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-ink-faded">{t('projectDetail', 'resolution')}:</span>
                 <span className="px-2 py-0.5 bg-paper-warm rounded text-ink text-xs uppercase">
@@ -231,7 +230,6 @@ export default function ProjectPage() {
                 </span>
               </div>
 
-              {/* Priority */}
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-ink-faded">{t('priorities', 'priority')}:</span>
                 <PrioritySelect
@@ -240,34 +238,32 @@ export default function ProjectPage() {
                   disabled={!canEdit()}
                 />
               </div>
-              
-              {/* Permission Badge */}
+
               {userPermission === 'view' && (
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-amber-700">
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-paper-warm border border-paper-lines rounded text-ink-light">
                   <Eye className="w-3.5 h-3.5" />
                   <span className="text-xs font-medium">{t('projectDetail', 'readOnly')}</span>
                 </div>
               )}
-              
-              {/* Active Users Indicator */}
-              <div className="flex items-center gap-2">
+
+              {/* Collaboration: presence + share */}
+              <div className="flex items-center gap-1.5">
                 <div className="flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-ink-faded" />
                   <span className="text-xs text-ink-faded">
-                    {presenceList.length > 0 
+                    {presenceList.length > 0
                       ? `${presenceList.length + 1} ${t('projectDetail', 'usersOnline')}`
                       : t('projectDetail', 'aloneHere')
                     }
                   </span>
                 </div>
-                
-                {/* User Avatars */}
+
                 {presenceList.length > 0 && (
                   <div className="flex -space-x-2">
                     {presenceList.slice(0, 5).map((presence) => (
                       <div
                         key={presence.session_id}
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium text-white border-2 border-paper shadow-sm"
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium text-white border-2 border-surface shadow-sm"
                         style={{ backgroundColor: presence.user_color }}
                         title={presence.user_name}
                       >
@@ -275,31 +271,53 @@ export default function ProjectPage() {
                       </div>
                     ))}
                     {presenceList.length > 5 && (
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium text-ink bg-paper-warm border-2 border-paper shadow-sm">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-medium text-ink bg-paper-warm border-2 border-surface shadow-sm">
                         +{presenceList.length - 5}
                       </div>
                     )}
                   </div>
                 )}
-                
-                {/* Live Sync Indicator */}
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title={t('projectDetail', 'liveSyncActive')} />
+
+                <span className="w-2 h-2 rounded-full bg-chip-green-300 animate-pulse" title={t('projectDetail', 'liveSyncActive')} />
+
+                {isOwner && (
+                  <button
+                    onClick={() => setShowShareModal(true)}
+                    className="btn-icon"
+                    title={t('dashboard', 'shareProject')}
+                    aria-label={t('dashboard', 'shareProject')}
+                  >
+                    <Share2 size={16} />
+                  </button>
+                )}
               </div>
-              
-              {/* Brush Editor - only show if user can edit */}
-              {canEdit() && (
-                <div className="ml-auto">
-                  <BrushEditor />
-                </div>
-              )}
             </div>
+
+            {/* Tool zone — brush alone as primary control */}
+            {canEdit() && (
+              <div className="ml-auto flex items-center sm:pl-3 sm:border-l sm:border-paper-lines">
+                <BrushEditor />
+              </div>
+            )}
           </div>
+        </div>
       </div>
 
       {/* Main Planning Grid - the single scroll region */}
       <main className="flex-1 min-h-0 pb-4 flex flex-col">
         <PlanningGrid />
       </main>
+
+      {isOwner && (
+        <ShareProjectModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          projectId={project.id}
+          projectName={project.name}
+          ownerId={project.user_id}
+          onProjectShareChange={(updated) => setProject(updated)}
+        />
+      )}
     </div>
   )
 }
