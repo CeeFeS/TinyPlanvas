@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import type { User, LoginCredentials } from './types'
 import * as api from './pocketbase-api'
 
@@ -95,18 +95,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [])
 
-  // Check admin status using API function (includes localStorage fallback)
-  const checkIsAdmin = user ? api.isAdmin() : false
+  // Check admin status using API function (includes localStorage fallback).
+  // Tied to the user identity so the synchronous localStorage read happens on
+  // sign-in instead of on every render of every consumer.
+  const isAdmin = useMemo(() => (user ? api.isAdmin() : false), [user])
 
-  const value: AuthContextType = {
-    user,
-    isLoading,
-    isAuthenticated: !!user,
-    isAdmin: checkIsAdmin,
-    login,
-    logout,
-    refreshUser,
-  }
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      isLoading,
+      isAuthenticated: !!user,
+      isAdmin,
+      login,
+      logout,
+      refreshUser,
+    }),
+    [user, isLoading, isAdmin, login, logout, refreshUser]
+  )
 
   return (
     <AuthContext.Provider value={value}>

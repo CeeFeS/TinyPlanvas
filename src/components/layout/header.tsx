@@ -1,13 +1,20 @@
 'use client'
 
 import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import { ChevronLeft, Plus, Settings, Shield, LogOut, Sun, Moon, Globe } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
 import { useLanguage } from '@/lib/language-context'
 import { useTheme } from '@/lib/theme-context'
-import { SettingsModal } from '@/components/settings/settings-modal'
+
+// The settings dialog pulls in the admin panel and is opened rarely, so it must
+// not weigh down the header that ships with every page.
+const SettingsModal = dynamic(
+  () => import('@/components/settings/settings-modal').then((m) => m.SettingsModal),
+  { ssr: false }
+)
 
 interface HeaderProps {
   onNewProject?: () => void
@@ -227,9 +234,9 @@ export function Header({
         </div>
       </header>
 
-      {/* Settings Modal */}
-      {!isPublic && (
-        <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      {/* Settings Modal - mounted on demand so its chunk loads on first open */}
+      {!isPublic && showSettings && (
+        <SettingsModal isOpen onClose={() => setShowSettings(false)} />
       )}
     </>
   )

@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { PlanningGrid } from '@/components/grid/planning-grid'
-import { useProjectStore } from '@/store/project-store'
+import { useProjectStore, useProjectActions } from '@/store/project-store'
 import { useTranslation } from '@/lib/language-context'
 import * as api from '@/lib/pocketbase-api'
 import { format, parseISO } from 'date-fns'
@@ -17,12 +17,9 @@ export default function SharedProjectPage() {
   const { t, dateLocale } = useTranslation()
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const {
-    project,
-    setAllData,
-    isLoading,
-    reset,
-  } = useProjectStore()
+  const project = useProjectStore((s) => s.project)
+  const isLoading = useProjectStore((s) => s.isLoading)
+  const { setAllData, reset } = useProjectActions()
 
   useEffect(() => {
     let mounted = true
@@ -51,12 +48,15 @@ export default function SharedProjectPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  const resolutionLabels: Record<string, string> = {
-    day: t('resolutions', 'day'),
-    week: t('resolutions', 'week'),
-    month: t('resolutions', 'month'),
-    year: t('resolutions', 'year'),
-  }
+  const resolutionLabels = useMemo<Record<string, string>>(
+    () => ({
+      day: t('resolutions', 'day'),
+      week: t('resolutions', 'week'),
+      month: t('resolutions', 'month'),
+      year: t('resolutions', 'year'),
+    }),
+    [t]
+  )
 
   if (loadError) {
     return (

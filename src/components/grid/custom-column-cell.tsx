@@ -202,7 +202,7 @@ export function CustomValueEditor({
           )}
         >
           <Code2 size={14} />
-          {t('customColumns', 'modeMarkdown')}
+          {t('customColumns', 'modeEdit')}
         </button>
         <button
           type="button"
@@ -215,7 +215,7 @@ export function CustomValueEditor({
           )}
         >
           <Eye size={14} />
-          {t('customColumns', 'modeRendered')}
+          {t('customColumns', 'modeView')}
         </button>
       </div>
 

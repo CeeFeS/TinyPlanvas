@@ -382,27 +382,43 @@ body {
 }
 
 /* ==================== Allocation Chips (GitHub-style) ==================== */
+/*
+ * The chips must never be wider than the column they live in: time-slot columns
+ * shrink with the viewport, so any fixed pixel width made chips spill over their
+ * cell and visually collide with their neighbours on smaller screens.
+ *
+ * They are therefore fluid (`width: 100%`) and only *capped* at their
+ * comfortable size. `container-type: inline-size` turns the cell into a query
+ * container so the label can scale with the width the column actually got.
+ */
 .allocation-cell {
-  min-width: 40px;
+  width: 100%;
+  min-width: 0;
   height: 34px;
-  padding: 3px;
+  padding: 3px 2px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto;
+  container-type: inline-size;
 }
 
 .allocation-chip {
-  width: 34px;
+  width: 100%;
+  max-width: 34px;
+  min-width: 0;
   height: 28px;
   border-radius: 5px;
   background: var(--paper-lines);
   cursor: default;
-  transition: all 0.1s ease;
+  /* Explicit properties instead of `all`: this element exists once per grid
+     cell, and `all` makes the browser watch every animatable property on each
+     of them. */
+  transition: background-color 0.1s ease, box-shadow 0.1s ease, transform 0.1s ease;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
 }
 
@@ -427,7 +443,12 @@ body {
   z-index: 1;
   font-family: var(--font-mono);
   font-size: 0.6875rem;
+  /* Scales with the column so three-digit values keep fitting on narrow screens.
+     Browsers without container queries fall back to the fixed size above. */
+  font-size: clamp(0.5rem, 36cqi, 0.6875rem);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
   line-height: 1;
   pointer-events: none;
   user-select: none;
@@ -652,7 +673,7 @@ body {
   border-radius: 4px;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .brush-chip:hover {
@@ -735,7 +756,7 @@ body {
 
 /* ==================== Time Slot Columns ==================== */
 .time-slot-col {
-  min-width: 40px;
+  min-width: 28px;
   width: auto;
 }
 
@@ -777,6 +798,27 @@ table.w-full .time-slot-col {
   text-align: center;
   border-left: 1px dashed var(--paper-lines);
   padding: 2px 0;
+  overflow: hidden;
+}
+
+/*
+ * Day/week/month label of a time-slot column. The wrapper is the query
+ * container (a <th> cannot be one), the inner span carries the scaling font so
+ * labels like "KW12" stay inside their column on narrow viewports.
+ */
+.time-slot-label {
+  container-type: inline-size;
+  overflow: hidden;
+}
+
+.time-slot-label > span {
+  display: block;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-size: clamp(0.5rem, 30cqi, 0.625rem);
+  line-height: 1.2;
+  color: var(--ink-faded);
 }
 
 .time-slot-header:first-of-type {
@@ -826,6 +868,14 @@ table.w-full .time-slot-col {
  * <tr> borders do not paint in the separated model. */
 .planvas-sticky-head tbody tr.planvas-row-top > td {
   border-top: 1px solid var(--paper-lines);
+}
+
+/*
+ * Subtask rows belong to the block of their parent, so they get a lighter
+ * divider than the one that starts a new top-level task.
+ */
+.planvas-sticky-head tbody tr.planvas-row-subtask > td {
+  border-top: 1px solid rgb(var(--paper-lines-rgb) / 0.55);
 }
 
 /* ---------- Frozen columns: flat separator (no floating shadow) -------------- */
@@ -897,7 +947,7 @@ table.w-full .time-slot-col {
   margin: -2px -6px;
   border-radius: 3px;
   border-bottom: 1px dashed transparent;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
   cursor: text;
 }
 
@@ -922,7 +972,7 @@ table.w-full .time-slot-col {
   padding: 2px 4px;
   border-radius: 2px;
   border-bottom: 1px dotted var(--ink-faded);
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
   cursor: text;
 }
 
@@ -1086,11 +1136,6 @@ table.w-full .time-slot-col {
 .border-paper { border-color: var(--paper-lines); }
 
 /* ==================== Animations ==================== */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @keyframes slideInFromTop {
   from { 
     opacity: 0;

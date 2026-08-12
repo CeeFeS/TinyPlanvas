@@ -1,12 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { Plus, Calendar, Clock, Loader2, AlertCircle, Trash2, User, Share2 } from 'lucide-react'
 import Link from 'next/link'
 import { Header } from '@/components/layout/header'
 import { LoginScreen } from '@/components/auth/login-screen'
-import { SetupScreen } from '@/components/auth/setup-screen'
-import { ShareProjectModal } from '@/components/project/share-modal'
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
 import { format, parseISO } from 'date-fns'
@@ -15,6 +14,18 @@ import type { ProjectWithOwner } from '@/lib/pocketbase-api'
 import { getPocketBase } from '@/lib/pocketbase'
 import { PriorityBadge } from '@/components/ui/priority-badge'
 import { getPriorityMeta } from '@/lib/priority'
+
+// Both are one-off screens/dialogs: the setup wizard runs once per install and
+// the share dialog only on demand, so neither belongs in the dashboard bundle.
+const SetupScreen = dynamic(
+  () => import('@/components/auth/setup-screen').then((m) => m.SetupScreen),
+  { ssr: false }
+)
+
+const ShareProjectModal = dynamic(
+  () => import('@/components/project/share-modal').then((m) => m.ShareProjectModal),
+  { ssr: false }
+)
 
 export default function DashboardPage() {
   const { isAuthenticated, isLoading: isAuthLoading, refreshUser, user } = useAuth()
@@ -30,11 +41,8 @@ export default function DashboardPage() {
   // Check if first-time setup is needed
   useEffect(() => {
     const checkSetup = async () => {
-      console.log('[Page] checkSetup called, isAuthenticated:', isAuthenticated, 'isAuthLoading:', isAuthLoading)
-      
       if (isAuthenticated) {
         // User is authenticated, setup is complete
-        console.log('[Page] User authenticated, marking setup complete')
         setNeedsSetup(false)
         api.markSetupComplete()
         return
@@ -45,13 +53,11 @@ export default function DashboardPage() {
         // Server (app_status collection) is the source of truth, NOT localStorage
         try {
           const hasExistingUsers = await api.hasUsers()
-          console.log('[Page] Server check - users exist:', hasExistingUsers)
           setNeedsSetup(!hasExistingUsers)
         } catch (err) {
           console.error('[Page] Error checking users:', err)
           // Show setup screen if we truly can't determine
           // This is the safest default for fresh installations
-          console.log('[Page] Cannot determine, showing setup screen')
           setNeedsSetup(true)
         }
       }
@@ -66,7 +72,6 @@ export default function DashboardPage() {
         try {
           const wasPromoted = await api.promoteToAdminIfOnlyUser()
           if (wasPromoted) {
-            console.log('[Auth] User was promoted to admin, refreshing...')
             refreshUser()
           }
         } catch (err) {

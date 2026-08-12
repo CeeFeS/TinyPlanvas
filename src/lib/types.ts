@@ -16,6 +16,7 @@
  * === tasks ===
  * - id: string (auto)
  * - project_id: relation -> projects
+ * - parent_id: relation -> tasks (optional, one-level subtasks)
  * - display_id: string (z.B. "1", "1.1", "A-01")
  * - name: string
  * - sort_order: number
@@ -76,6 +77,8 @@ export interface Project extends BaseRecord {
 
 export interface Task extends BaseRecord {
   project_id: string
+  /** Optional parent task id (one nesting level). Empty/null = root task. */
+  parent_id?: string
   display_id: string
   name: string
   sort_order: number
@@ -153,7 +156,9 @@ export interface UserWithPermissions extends User {
 // Task mit aggregierten Daten
 export interface TaskWithAggregation extends Task {
   resources: ResourceWithAllocations[]
-  // Aggregierte Werte (berechnet aus Ressourcen)
+  /** Direct subtasks (one nesting level). Only populated on root tasks. */
+  children: TaskWithAggregation[]
+  // Aggregierte Werte (berechnet aus eigenen Ressourcen + Kindern)
   computed: {
     startDate: string | null  // Frühestes Allocation-Datum
     endDate: string | null    // Spätestes Allocation-Datum
@@ -234,6 +239,7 @@ export interface CreateTaskDTO {
   display_id: string
   name: string
   sort_order?: number
+  parent_id?: string
 }
 
 export interface CreateCustomColumnDTO {

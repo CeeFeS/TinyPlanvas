@@ -54,8 +54,6 @@ export function middleware(request: NextRequest) {
   // Wenn kein Auth-Cookie vorhanden, zur Hauptseite weiterleiten
   // (dort wird dann der Login-Screen angezeigt)
   if (!authCookie || !authCookie.value) {
-    console.log('[Middleware] No auth cookie, redirecting to login:', pathname)
-    
     // Speichere die ursprüngliche URL für Redirect nach Login
     const redirectUrl = new URL('/', request.url)
     redirectUrl.searchParams.set('redirect', pathname)
@@ -71,7 +69,6 @@ export function middleware(request: NextRequest) {
     
     // Prüfe ob Token vorhanden ist
     if (!authData.token) {
-      console.log('[Middleware] Invalid auth cookie (no token), redirecting:', pathname)
       const redirectUrl = new URL('/', request.url)
       redirectUrl.searchParams.set('redirect', pathname)
       return NextResponse.redirect(redirectUrl)
@@ -83,7 +80,6 @@ export function middleware(request: NextRequest) {
     
   } catch {
     // Cookie ist nicht valides JSON
-    console.log('[Middleware] Malformed auth cookie, redirecting:', pathname)
     const redirectUrl = new URL('/', request.url)
     redirectUrl.searchParams.set('redirect', pathname)
     return NextResponse.redirect(redirectUrl)
@@ -99,7 +95,9 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * plus anything with a static asset extension (fonts, images, …) so
+     * `public/` files never pay for the auth check.
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|icon.svg|apple-icon).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|icon.svg|apple-icon|.*\\.(?:png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|txt|xml|webmanifest)$).*)',
   ],
 }

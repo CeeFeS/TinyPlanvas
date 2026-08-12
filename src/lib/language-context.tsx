@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 import { Language, translations, TranslationKeys, LANGUAGE_NAMES } from './i18n'
 import { de, enUS, Locale } from 'date-fns/locale'
 
@@ -92,23 +92,24 @@ export function LanguageProvider({ children }: LanguageProviderProps) {
     return dateObj.toLocaleDateString(language === 'de' ? 'de-DE' : 'en-US')
   }, [language])
 
-  // Prevent hydration mismatch by not rendering until initialized
-  if (!isInitialized) {
-    return null
-  }
-
-  return (
-    <LanguageContext.Provider value={{
+  const value = useMemo(
+    () => ({
       language,
       setLanguage,
       t,
       dateLocale,
       formatDate,
       availableLanguages: LANGUAGE_NAMES,
-    }}>
-      {children}
-    </LanguageContext.Provider>
+    }),
+    [language, setLanguage, t, dateLocale, formatDate]
   )
+
+  // Prevent hydration mismatch by not rendering until initialized
+  if (!isInitialized) {
+    return null
+  }
+
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>
 }
 
 // Hook to use language context

@@ -7,19 +7,9 @@ import {
   eachWeekOfInterval, 
   eachMonthOfInterval,
   eachYearOfInterval,
-  startOfWeek,
-  endOfWeek,
-  startOfMonth,
-  endOfMonth,
-  startOfYear,
-  endOfYear,
-  isSameDay,
-  isSameWeek,
-  isSameMonth,
-  isSameYear,
   Locale,
 } from 'date-fns'
-import { de, enUS } from 'date-fns/locale'
+import { de } from 'date-fns/locale'
 import type { Resolution, Allocation, ResourceWithAllocations, TaskWithAggregation } from './types'
 
 // Tailwind class merger
@@ -65,17 +55,16 @@ export function formatTimeSlotHeader(
   locale?: Locale,
   language?: 'de' | 'en'
 ): string {
-  const loc = locale || de
-  const weekPrefix = language === 'en' ? 'W' : 'KW'
   switch (resolution) {
+    // Plain numbers: no locale involved, so skip the date-fns formatter.
     case 'day':
-      return format(date, 'd', { locale: loc })
-    case 'week':
-      return `${weekPrefix}${format(date, 'w', { locale: loc })}`
-    case 'month':
-      return format(date, 'MMM', { locale: loc })
+      return String(date.getDate())
     case 'year':
-      return format(date, 'yyyy', { locale: loc })
+      return String(date.getFullYear())
+    case 'week':
+      return `${language === 'en' ? 'W' : 'KW'}${format(date, 'w', { locale: locale || de })}`
+    case 'month':
+      return format(date, 'MMM', { locale: locale || de })
   }
 }
 
@@ -96,37 +85,38 @@ export function formatTimeSlotGroup(date: Date, resolution: Resolution, locale?:
   }
 }
 
-/**
- * Prüft ob ein Datum in einen Slot fällt
- */
-export function isDateInSlot(date: Date, slotDate: Date, resolution: Resolution): boolean {
-  switch (resolution) {
-    case 'day':
-      return isSameDay(date, slotDate)
-    case 'week':
-      return isSameWeek(date, slotDate, { weekStartsOn: 1 })
-    case 'month':
-      return isSameMonth(date, slotDate)
-    case 'year':
-      return isSameYear(date, slotDate)
-  }
-}
+const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n))
 
 /**
- * Konvertiert Datum zu Slot-Key (für Map-Lookup)
+ * Konvertiert Datum zu Slot-Key (für Map-Lookup).
+ *
+ * Hand-rolled instead of `format()`: this runs once per grid cell per render
+ * (thousands of calls), where the date-fns formatter dominates the profile.
  */
 export function dateToSlotKey(date: Date, resolution: Resolution): string {
   switch (resolution) {
     case 'day':
-      return format(date, 'yyyy-MM-dd')
-    case 'week':
-      // Start der Woche als Key
-      return format(startOfWeek(date, { weekStartsOn: 1 }), 'yyyy-MM-dd')
+      return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+    case 'week': {
+      // Monday-based start of week as key
+      const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+      return `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`
+    }
     case 'month':
-      return format(startOfMonth(date), 'yyyy-MM')
+      return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`
     case 'year':
-      return format(startOfYear(date), 'yyyy')
+      return String(date.getFullYear())
   }
+}
+
+/** Slot keys for a whole time window - computed once, reused by every row. */
+export function buildSlotKeys(slots: Date[], resolution: Resolution): string[] {
+  const keys = new Array<string>(slots.length)
+  for (let i = 0; i < slots.length; i++) {
+    keys[i] = dateToSlotKey(slots[i], resolution)
+  }
+  return keys
 }
 
 // ==================== Aggregation Utils ====================
@@ -185,12 +175,15 @@ export function buildAllocationMap(allocations: Allocation[]): Map<string, Alloc
 // ==================== ID Generation ====================
 
 /**
- * Generiert die nächste Display-ID für eine neue Task
+ * Generiert die nächste Display-ID für eine neue Root-Task
+ * (nur reine numerische IDs wie "1", "2" — keine "1.1")
  */
 export function generateNextDisplayId(existingIds: string[]): string {
-  // Versuche numerische IDs zu finden
   const numericIds = existingIds
-    .map(id => parseInt(id, 10))
+    .map(id => {
+      if (!/^\d+$/.test(id)) return NaN
+      return parseInt(id, 10)
+    })
     .filter(n => !isNaN(n))
   
   if (numericIds.length === 0) {
@@ -198,6 +191,57 @@ export function generateNextDisplayId(existingIds: string[]): string {
   }
   
   return String(Math.max(...numericIds) + 1)
+}
+
+/**
+ * Generiert die nächste Display-ID für eine Unteraufgabe (z.B. "1.2")
+ */
+export function generateNextSubtaskDisplayId(
+  parentDisplayId: string,
+  siblingDisplayIds: string[]
+): string {
+  const prefix = `${parentDisplayId}.`
+  const suffixes = siblingDisplayIds
+    .filter(id => id.startsWith(prefix))
+    .map(id => {
+      const rest = id.slice(prefix.length)
+      if (!/^\d+$/.test(rest)) return NaN
+      return parseInt(rest, 10)
+    })
+    .filter(n => !isNaN(n))
+
+  const next = suffixes.length === 0 ? 1 : Math.max(...suffixes) + 1
+  return `${parentDisplayId}.${next}`
+}
+
+/** Merges two computed aggregations (e.g. own resources + children). */
+export function mergeTaskComputed(
+  a: TaskWithAggregation['computed'],
+  b: TaskWithAggregation['computed']
+): TaskWithAggregation['computed'] {
+  let startDate = a.startDate
+  let endDate = a.endDate
+  if (b.startDate && (!startDate || b.startDate < startDate)) startDate = b.startDate
+  if (b.endDate && (!endDate || b.endDate > endDate)) endDate = b.endDate
+  return {
+    startDate,
+    endDate,
+    totalEffort: a.totalEffort + b.totalEffort,
+  }
+}
+
+/** Flatten root tasks + their children (one level). */
+export function flattenTasksWithChildren(
+  tasks: TaskWithAggregation[]
+): TaskWithAggregation[] {
+  const result: TaskWithAggregation[] = []
+  for (const task of tasks) {
+    result.push(task)
+    if (task.children?.length) {
+      result.push(...task.children)
+    }
+  }
+  return result
 }
 
 // ==================== Color Utils ====================
@@ -224,14 +268,55 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
     : null
 }
 
+// A project only ever uses a handful of distinct colors, but the contrast
+// lookup happens per painted cell per render - so memoize it.
+const contrastCache = new Map<string, string>()
+
 /**
  * Wählt passende Textfarbe (weiß/schwarz) basierend auf Hintergrund
  */
 export function getContrastTextColor(hexColor: string): string {
+  const cached = contrastCache.get(hexColor)
+  if (cached !== undefined) return cached
+
   const rgb = hexToRgb(hexColor)
-  if (!rgb) return '#2D3436'
-  
   // Berechne relative luminance
-  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255
-  return luminance > 0.5 ? '#2D3436' : '#FFFFFF'
+  const color = !rgb
+    ? '#2D3436'
+    : (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255 > 0.5
+      ? '#2D3436'
+      : '#FFFFFF'
+
+  contrastCache.set(hexColor, color)
+  return color
+}
+
+const NEUTRAL_CHIP_COLOR = '#E8E4DD'
+
+/**
+ * Blends allocation colors weighted by their percentage - used wherever several
+ * resources share one cell (task rollups, resource summary).
+ */
+export function mixAllocationColors(
+  colorData: { color: string; percentage: number }[]
+): string {
+  if (colorData.length === 0) return NEUTRAL_CHIP_COLOR
+  if (colorData.length === 1) return colorData[0].color
+
+  let totalWeight = 0
+  let r = 0, g = 0, b = 0
+
+  for (const { color, percentage } of colorData) {
+    const rgb = hexToRgb(color)
+    if (!rgb) continue
+    r += rgb.r * percentage
+    g += rgb.g * percentage
+    b += rgb.b * percentage
+    totalWeight += percentage
+  }
+
+  if (totalWeight === 0) return NEUTRAL_CHIP_COLOR
+
+  const hex = (v: number) => Math.round(v / totalWeight).toString(16).padStart(2, '0')
+  return `#${hex(r)}${hex(g)}${hex(b)}`
 }

@@ -14,7 +14,13 @@ import {
   type CustomRowType,
   DEFAULT_BASE_COLOR,
 } from '@/lib/types'
-import { computeTaskAggregation, buildAllocationMap } from '@/lib/utils'
+import {
+  computeTaskAggregation,
+  buildAllocationMap,
+  mergeTaskComputed,
+  generateNextDisplayId,
+  generateNextSubtaskDisplayId,
+} from '@/lib/utils'
 import * as api from '@/lib/pocketbase-api'
 import type { RecordSubscription } from 'pocketbase'
 
@@ -58,7 +64,7 @@ interface ProjectState {
   presenceInterval: ReturnType<typeof setInterval> | null
 }
 
-interface ProjectActions {
+export interface ProjectActions {
   // Data loading
   setProject: (project: Project) => void
   setAllData: (data: {
@@ -79,9 +85,18 @@ interface ProjectActions {
   
   // Task CRUD (with API)
   addTask: (task: Task) => void
-  createTaskAsync: (projectId: string, displayId: string, name: string) => Promise<Task>
+  createTaskAsync: (
+    projectId: string,
+    displayId: string,
+    name: string,
+    parentId?: string | null
+  ) => Promise<Task>
   updateTask: (id: string, updates: Partial<Task>) => void
   updateTaskAsync: (id: string, updates: Partial<Task>) => Promise<void>
+  /** Indent/outdent: attach a task to a new parent (null = root). Returns false if not allowed. */
+  moveTaskAsync: (id: string, newParentId: string | null) => Promise<boolean>
+  /** Re-derives subtask display ids ("1.1", "1.2", …) from their position. */
+  renumberSubtasksAsync: (parentId: string) => Promise<void>
   deleteTask: (id: string) => void
   deleteTaskAsync: (id: string) => Promise<void>
   
@@ -141,7 +156,7 @@ interface ProjectActions {
   reset: () => void
 }
 
-type ProjectStore = ProjectState & ProjectActions
+export type ProjectStore = ProjectState & ProjectActions
 
 // ==================== Initial State ====================
 
@@ -170,34 +185,171 @@ const initialState: ProjectState = {
 
 // ==================== Helper Functions ====================
 
+/**
+ * Builds the denormalized task tree.
+ *
+ * Grouping is done via lookup maps rather than nested `filter()` calls: the
+ * naive version was O(tasks × resources + resources × allocations), which
+ * dominated every mutation in projects with a few thousand allocations.
+ */
 function computeTasksWithData(
   tasks: Task[],
   resources: Resource[],
   allocations: Allocation[]
 ): TaskWithAggregation[] {
-  return tasks.map(task => {
-    // Finde alle Ressourcen für diese Task
-    const taskResources = resources.filter(r => r.task_id === task.id)
-    
-    // Erweitere Ressourcen mit Allocations
-    const resourcesWithAllocations: ResourceWithAllocations[] = taskResources.map(resource => {
-      const resourceAllocations = allocations.filter(a => a.resource_id === resource.id)
-      return {
-        ...resource,
-        allocations: resourceAllocations,
-        allocationMap: buildAllocationMap(resourceAllocations),
-      }
-    })
-    
-    // Berechne Aggregation
-    const computed = computeTaskAggregation(resourcesWithAllocations)
-    
+  const allocationsByResource = new Map<string, Allocation[]>()
+  for (const allocation of allocations) {
+    const list = allocationsByResource.get(allocation.resource_id)
+    if (list) list.push(allocation)
+    else allocationsByResource.set(allocation.resource_id, [allocation])
+  }
+
+  const resourcesByTask = new Map<string, ResourceWithAllocations[]>()
+  for (const resource of resources) {
+    const resourceAllocations = allocationsByResource.get(resource.id) ?? []
+    const enrichedResource: ResourceWithAllocations = {
+      ...resource,
+      allocations: resourceAllocations,
+      allocationMap: buildAllocationMap(resourceAllocations),
+    }
+    const list = resourcesByTask.get(resource.task_id)
+    if (list) list.push(enrichedResource)
+    else resourcesByTask.set(resource.task_id, [enrichedResource])
+  }
+
+  const enriched = tasks.map(task => {
+    const resourcesWithAllocations = resourcesByTask.get(task.id) ?? []
     return {
       ...task,
+      parent_id: task.parent_id || undefined,
       resources: resourcesWithAllocations,
-      computed,
+      children: [] as TaskWithAggregation[],
+      computed: computeTaskAggregation(resourcesWithAllocations),
     }
-  }).sort((a, b) => a.sort_order - b.sort_order)
+  })
+
+  const byId = new Map(enriched.map(t => [t.id, t]))
+  const roots: TaskWithAggregation[] = []
+
+  for (const task of enriched) {
+    const parentId = task.parent_id
+    if (parentId && byId.has(parentId)) {
+      byId.get(parentId)!.children.push(task)
+    } else {
+      roots.push(task)
+    }
+  }
+
+  // Sort siblings and roll parent aggregation up from children
+  const sortByOrder = (a: TaskWithAggregation, b: TaskWithAggregation) =>
+    a.sort_order - b.sort_order
+
+  for (const root of roots) {
+    root.children.sort(sortByOrder)
+    for (const child of root.children) {
+      root.computed = mergeTaskComputed(root.computed, child.computed)
+    }
+  }
+
+  return roots.sort(sortByOrder)
+}
+
+/** Recomputes a task's aggregation from its own resources + children rollup. */
+function withRecomputedAggregation(task: TaskWithAggregation): TaskWithAggregation {
+  let computed = computeTaskAggregation(task.resources)
+  for (const child of task.children) {
+    computed = mergeTaskComputed(computed, child.computed)
+  }
+  return { ...task, computed }
+}
+
+function withPatchedAllocation(
+  resource: ResourceWithAllocations,
+  date: string,
+  allocation: Allocation | null
+): ResourceWithAllocations {
+  const allocationMap = new Map(resource.allocationMap)
+  if (allocation) allocationMap.set(date, allocation)
+  else allocationMap.delete(date)
+
+  return {
+    ...resource,
+    allocations: Array.from(allocationMap.values()),
+    allocationMap,
+  }
+}
+
+/**
+ * Applies a single allocation change to the task tree without rebuilding it.
+ *
+ * Painting a cell used to trigger a full `computeTasksWithData()` pass, which
+ * replaced every task object and forced the whole grid to re-render. Here only
+ * the touched resource, its task and (if nested) its parent get new
+ * identities - every other row keeps its reference and stays memoized.
+ */
+function patchAllocationInTree(
+  tree: TaskWithAggregation[],
+  resourceId: string,
+  date: string,
+  allocation: Allocation | null
+): TaskWithAggregation[] {
+  const patchWithin = (task: TaskWithAggregation): TaskWithAggregation | null => {
+    const index = task.resources.findIndex(r => r.id === resourceId)
+    if (index === -1) return null
+    const resources = task.resources.slice()
+    resources[index] = withPatchedAllocation(resources[index], date, allocation)
+    return withRecomputedAggregation({ ...task, resources })
+  }
+
+  for (let i = 0; i < tree.length; i++) {
+    const root = tree[i]
+
+    const patchedRoot = patchWithin(root)
+    if (patchedRoot) {
+      const next = tree.slice()
+      next[i] = patchedRoot
+      return next
+    }
+
+    for (let j = 0; j < root.children.length; j++) {
+      const patchedChild = patchWithin(root.children[j])
+      if (!patchedChild) continue
+      const children = root.children.slice()
+      children[j] = patchedChild
+      const next = tree.slice()
+      next[i] = withRecomputedAggregation({ ...root, children })
+      return next
+    }
+  }
+
+  return tree
+}
+
+/** Finds an enriched resource in the task tree without allocating intermediates. */
+export function findResourceInTree(
+  tree: TaskWithAggregation[],
+  resourceId: string
+): ResourceWithAllocations | undefined {
+  for (const root of tree) {
+    for (const resource of root.resources) {
+      if (resource.id === resourceId) return resource
+    }
+    for (const child of root.children) {
+      for (const resource of child.resources) {
+        if (resource.id === resourceId) return resource
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Next free sort order within a sibling group. Using max+1 (instead of count+1)
+ * keeps ordering stable in projects where earlier siblings were deleted.
+ */
+function nextSortOrder(siblings: Task[]): number {
+  if (siblings.length === 0) return 1
+  return Math.max(...siblings.map(s => s.sort_order ?? 0)) + 1
 }
 
 // ==================== Store ====================
@@ -272,8 +424,11 @@ export const useProjectStore = create<ProjectStore>()(
       )
     }),
     
-    createTaskAsync: async (projectId, displayId, name) => {
-      const sortOrder = get().tasks.length + 1
+    createTaskAsync: async (projectId, displayId, name, parentId) => {
+      const siblings = get().tasks.filter(t =>
+        parentId ? t.parent_id === parentId : !t.parent_id
+      )
+      const sortOrder = nextSortOrder(siblings)
       
       // Optimistic update with temp ID
       const tempId = `temp_${Date.now()}`
@@ -283,6 +438,7 @@ export const useProjectStore = create<ProjectStore>()(
         display_id: displayId,
         name,
         sort_order: sortOrder,
+        ...(parentId ? { parent_id: parentId } : {}),
         created: new Date().toISOString(),
         updated: new Date().toISOString(),
       }
@@ -295,6 +451,7 @@ export const useProjectStore = create<ProjectStore>()(
           display_id: displayId,
           name,
           sort_order: sortOrder,
+          ...(parentId ? { parent_id: parentId } : {}),
         })
         
         // Replace temp task with real one (or verify realtime already did it)
@@ -360,6 +517,15 @@ export const useProjectStore = create<ProjectStore>()(
       
       try {
         await api.updateTask(id, updates)
+
+        // Renaming a parent's id re-prefixes its subtasks ("2" -> "5" => "5.1", …)
+        if (updates.display_id !== undefined) {
+          const task = get().tasks.find(t => t.id === id)
+          const hasChildren = get().tasks.some(t => t.parent_id === id)
+          if (task && !task.parent_id && hasChildren) {
+            await get().renumberSubtasksAsync(id)
+          }
+        }
       } catch (error) {
         // Rollback on error
         if (originalTask) {
@@ -371,14 +537,104 @@ export const useProjectStore = create<ProjectStore>()(
         throw error
       }
     },
+
+    renumberSubtasksAsync: async (parentId) => {
+      const parent = get().tasks.find(t => t.id === parentId)
+      if (!parent) return
+
+      const children = get().tasks
+        .filter(t => t.parent_id === parentId && !t.id.startsWith('temp_'))
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+
+      const pending: Promise<void>[] = []
+      children.forEach((child, index) => {
+        const expected = `${parent.display_id}.${index + 1}`
+        if (child.display_id !== expected) {
+          pending.push(get().updateTaskAsync(child.id, { display_id: expected }))
+        }
+      })
+
+      await Promise.all(pending)
+    },
+
+    moveTaskAsync: async (id, newParentId) => {
+      if (id.startsWith('temp_')) return false
+
+      const tasks = get().tasks
+      const task = tasks.find(t => t.id === id)
+      if (!task) return false
+
+      const currentParentId = task.parent_id || null
+      if (currentParentId === newParentId) return false
+
+      // Only one nesting level: a task that has subtasks cannot become a subtask
+      if (newParentId && tasks.some(t => t.parent_id === id)) return false
+
+      const newParent = newParentId ? tasks.find(t => t.id === newParentId) : null
+      if (newParentId && (!newParent || newParent.parent_id)) return false
+
+      const siblings = tasks.filter(
+        t => t.id !== id && (newParentId ? t.parent_id === newParentId : !t.parent_id)
+      )
+
+      let sortOrder: number
+      let displayId: string
+
+      if (newParent) {
+        sortOrder = nextSortOrder(siblings)
+        displayId = generateNextSubtaskDisplayId(
+          newParent.display_id,
+          siblings.map(s => s.display_id)
+        )
+      } else {
+        // Outdent: land between the former parent and the next root task.
+        // Halving the gap keeps repeated outdents from colliding on one value.
+        const oldParent = currentParentId ? tasks.find(t => t.id === currentParentId) : null
+        if (oldParent) {
+          const parentOrder = oldParent.sort_order ?? 0
+          const nextRootOrder = siblings
+            .map(s => s.sort_order ?? 0)
+            .filter(order => order > parentOrder)
+            .sort((a, b) => a - b)[0]
+          sortOrder = nextRootOrder !== undefined
+            ? (parentOrder + nextRootOrder) / 2
+            : parentOrder + 1
+        } else {
+          sortOrder = nextSortOrder(siblings)
+        }
+        displayId = generateNextDisplayId(siblings.map(s => s.display_id))
+      }
+
+      try {
+        await get().updateTaskAsync(id, {
+          parent_id: newParentId ?? '',
+          sort_order: sortOrder,
+          display_id: displayId,
+        })
+      } catch {
+        return false
+      }
+
+      // Close the gap in the group the task left
+      if (currentParentId) {
+        await get().renumberSubtasksAsync(currentParentId)
+      }
+
+      return true
+    },
     
     deleteTask: (id) => set((state) => {
-      state.tasks = state.tasks.filter(t => t.id !== id)
-      // Auch zugehörige Ressourcen und Allocations löschen
+      // Collect task + direct children (one nesting level)
+      const idsToDelete = new Set<string>([id])
+      for (const t of state.tasks) {
+        if (t.parent_id === id) idsToDelete.add(t.id)
+      }
+
+      state.tasks = state.tasks.filter(t => !idsToDelete.has(t.id))
       const resourceIds = state.resources
-        .filter(r => r.task_id === id)
+        .filter(r => idsToDelete.has(r.task_id))
         .map(r => r.id)
-      state.resources = state.resources.filter(r => r.task_id !== id)
+      state.resources = state.resources.filter(r => !idsToDelete.has(r.task_id))
       state.allocations = state.allocations.filter(
         a => !resourceIds.includes(a.resource_id)
       )
@@ -400,8 +656,11 @@ export const useProjectStore = create<ProjectStore>()(
         return
       }
       
-      const originalTask = get().tasks.find(t => t.id === id)
-      const originalResources = get().resources.filter(r => r.task_id === id)
+      const formerParentId = get().tasks.find(t => t.id === id)?.parent_id || null
+      const childTasks = get().tasks.filter(t => t.parent_id === id)
+      const idsToDelete = [id, ...childTasks.map(t => t.id)]
+      const originalTasks = get().tasks.filter(t => idsToDelete.includes(t.id))
+      const originalResources = get().resources.filter(r => idsToDelete.includes(r.task_id))
       const resourceIds = originalResources.map(r => r.id)
       const originalAllocations = get().allocations.filter(a => resourceIds.includes(a.resource_id))
       
@@ -410,11 +669,14 @@ export const useProjectStore = create<ProjectStore>()(
       
       try {
         await api.deleteTask(id)
+        if (formerParentId) {
+          await get().renumberSubtasksAsync(formerParentId)
+        }
       } catch (error) {
         // Rollback on error
-        if (originalTask) {
+        if (originalTasks.length > 0) {
           set((state) => {
-            state.tasks.push(originalTask)
+            state.tasks.push(...originalTasks)
             state.resources.push(...originalResources)
             state.allocations.push(...originalAllocations)
             state.tasksWithData = computeTasksWithData(
@@ -574,38 +836,43 @@ export const useProjectStore = create<ProjectStore>()(
       }
     },
     
-    // Allocation CRUD
-    setAllocation: (resourceId, date, percentage, colorHex) => set((state) => {
-      // Prüfe ob bereits eine Allocation existiert
+    // Allocation CRUD.
+    // The tree patch is computed from the *current* (already finalized) state
+    // before entering the immer draft: reading the draft would make immer try to
+    // proxy the `allocationMap` Maps inside it.
+    setAllocation: (resourceId, date, percentage, colorHex) => {
+      const state = get()
       const existingIndex = state.allocations.findIndex(
         a => a.resource_id === resourceId && a.date === date
       )
-      
-      if (existingIndex !== -1) {
-        // Update existing
-        state.allocations[existingIndex].percentage = percentage
-        state.allocations[existingIndex].color_hex = colorHex
-      } else {
-        // Create new (temporäre ID für optimistic update)
-        const newAllocation: Allocation = {
-          id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          resource_id: resourceId,
-          date,
-          percentage,
-          color_hex: colorHex,
-          created: new Date().toISOString(),
-          updated: new Date().toISOString(),
-        }
-        state.allocations.push(newAllocation)
-      }
-      
-      // Recompute
-      state.tasksWithData = computeTasksWithData(
-        state.tasks,
-        state.resources,
-        state.allocations
+      const existing = existingIndex !== -1 ? state.allocations[existingIndex] : undefined
+
+      const allocation: Allocation = existing
+        ? { ...existing, percentage, color_hex: colorHex }
+        : {
+            // Temporäre ID für optimistic update
+            id: `temp_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            resource_id: resourceId,
+            date,
+            percentage,
+            color_hex: colorHex,
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+          }
+
+      const tasksWithData = patchAllocationInTree(
+        state.tasksWithData,
+        resourceId,
+        date,
+        allocation
       )
-    }),
+
+      set((draft) => {
+        if (existingIndex !== -1) draft.allocations[existingIndex] = allocation
+        else draft.allocations.push(allocation)
+        draft.tasksWithData = tasksWithData
+      })
+    },
     
     setAllocationAsync: async (resourceId, date, percentage, colorHex) => {
       // Skip if resource is temp
@@ -637,16 +904,21 @@ export const useProjectStore = create<ProjectStore>()(
       }
     },
     
-    removeAllocation: (resourceId, date) => set((state) => {
-      state.allocations = state.allocations.filter(
-        a => !(a.resource_id === resourceId && a.date === date)
+    removeAllocation: (resourceId, date) => {
+      const tasksWithData = patchAllocationInTree(
+        get().tasksWithData,
+        resourceId,
+        date,
+        null
       )
-      state.tasksWithData = computeTasksWithData(
-        state.tasks,
-        state.resources,
-        state.allocations
-      )
-    }),
+
+      set((draft) => {
+        draft.allocations = draft.allocations.filter(
+          a => !(a.resource_id === resourceId && a.date === date)
+        )
+        draft.tasksWithData = tasksWithData
+      })
+    },
     
     removeAllocationAsync: async (resourceId, date) => {
       if (resourceId.startsWith('temp_')) {
@@ -856,11 +1128,14 @@ export const useProjectStore = create<ProjectStore>()(
           const existingById = state.tasks.find(t => t.id === record.id)
           if (existingById) return // Already have this exact record
           
-          // Check for temp record that matches (our own optimistic update)
+          // Check for temp record that matches (our own optimistic update).
+          // parent_id is part of the match because identical subtask names
+          // ("Konzept", "Test") across different parents are common.
           const tempIndex = state.tasks.findIndex(
             t => t.id.startsWith('temp_') && 
                  t.project_id === record.project_id && 
-                 t.name === record.name
+                 t.name === record.name &&
+                 (t.parent_id || '') === (record.parent_id || '')
           )
           if (tempIndex !== -1) {
             // Replace temp with real record
@@ -944,7 +1219,18 @@ export const useProjectStore = create<ProjectStore>()(
     
     handleAllocationChange: (event) => {
       const { action, record } = event
-      
+
+      // Same reasoning as setAllocation: patch the tree from finalized state
+      // before entering the draft. A remote user painting a stroke produces one
+      // event per cell, so a full rebuild per event would be as expensive as
+      // the local paint path used to be.
+      const tasksWithData = patchAllocationInTree(
+        get().tasksWithData,
+        record.resource_id,
+        record.date,
+        action === 'delete' ? null : record
+      )
+
       set((state) => {
         if (action === 'create') {
           // Only add if not already present (avoid duplicates from optimistic updates)
@@ -977,15 +1263,11 @@ export const useProjectStore = create<ProjectStore>()(
         } else if (action === 'delete') {
           state.allocations = state.allocations.filter(a => a.id !== record.id)
         }
-        
-        state.tasksWithData = computeTasksWithData(
-          state.tasks,
-          state.resources,
-          state.allocations
-        )
+
+        state.tasksWithData = tasksWithData
       })
     },
-    
+
     handlePresenceChange: (event) => {
       const { action, record } = event
       const state = get()
@@ -1123,18 +1405,20 @@ export const useProjectStore = create<ProjectStore>()(
       // Start heartbeat interval (every 10 seconds)
       const presenceInterval = setInterval(async () => {
         const { project, sessionId, userName, userColor } = get()
-        if (project) {
-          await api.upsertPresence(project.id, sessionId, userName, userColor)
-          
-          // Also clean up stale presence locally
-          const thirtySecondsAgo = Date.now() - 30000
-          set((s) => {
-            s.presenceList = s.presenceList.filter(p => {
-              const lastSeen = new Date(p.last_seen).getTime()
-              return lastSeen > thirtySecondsAgo
-            })
-          })
-        }
+        if (!project) return
+
+        await api.upsertPresence(project.id, sessionId, userName, userColor)
+
+        // Also clean up stale presence locally. Only write when something
+        // actually dropped out - otherwise every heartbeat would hand out a new
+        // array identity and re-render all presence consumers.
+        const thirtySecondsAgo = Date.now() - 30000
+        const isFresh = (p: Presence) => new Date(p.last_seen).getTime() > thirtySecondsAgo
+        if (get().presenceList.every(isFresh)) return
+
+        set((s) => {
+          s.presenceList = s.presenceList.filter(isFresh)
+        })
       }, 10000)
       
       set((s) => {
@@ -1241,3 +1525,21 @@ export const useProjectStore = create<ProjectStore>()(
     },
   }))
 )
+
+// ==================== Selectors ====================
+
+/**
+ * Actions are created once when the store is built and never replaced, so they
+ * can be read without subscribing. Components that only dispatch (and never
+ * read state) therefore cause zero re-renders.
+ *
+ * The return type deliberately hides the state fields - reading them here would
+ * yield a stale snapshot instead of a reactive value.
+ */
+export const useProjectActions = (): ProjectActions => useProjectStore.getState()
+
+/** Reactive edit-permission flag (a boolean, so it never re-renders spuriously). */
+export const selectCanEdit = (state: ProjectStore): boolean =>
+  state.userPermission === 'owner' || state.userPermission === 'edit'
+
+export const useCanEdit = () => useProjectStore(selectCanEdit)

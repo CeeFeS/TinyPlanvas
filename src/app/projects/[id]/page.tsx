@@ -1,12 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/header'
 import { BrushEditor } from '@/components/grid/brush-editor'
 import { PlanningGrid } from '@/components/grid/planning-grid'
-import { ShareProjectModal } from '@/components/project/share-modal'
-import { useProjectStore } from '@/store/project-store'
+import { useProjectStore, useProjectActions, useCanEdit } from '@/store/project-store'
+
+const ShareProjectModal = dynamic(
+  () => import('@/components/project/share-modal').then((m) => m.ShareProjectModal),
+  { ssr: false }
+)
 import { useAuth } from '@/lib/auth-context'
 import { useTranslation } from '@/lib/language-context'
 import { LoginScreen } from '@/components/auth/login-screen'
@@ -24,20 +29,21 @@ export default function ProjectPage() {
   const { t, dateLocale } = useTranslation()
   const [showShareModal, setShowShareModal] = useState(false)
   
-  const { 
-    project, 
+  const project = useProjectStore((s) => s.project)
+  const isLoading = useProjectStore((s) => s.isLoading)
+  const error = useProjectStore((s) => s.error)
+  const presenceList = useProjectStore((s) => s.presenceList)
+  const userPermission = useProjectStore((s) => s.userPermission)
+  const canEdit = useCanEdit()
+
+  const {
     loadProject,
-    isLoading,
-    error,
     reset,
     unsubscribeFromProject,
     stopPresence,
-    presenceList,
     initializePresence,
-    userPermission,
-    canEdit,
     setProject,
-  } = useProjectStore()
+  } = useProjectActions()
 
   const isOwner = !!user && !!project && user.id === project.user_id
 
@@ -56,12 +62,15 @@ export default function ProjectPage() {
   }
 
   // Resolution labels
-  const resolutionLabels: Record<string, string> = {
-    day: t('resolutions', 'day'),
-    week: t('resolutions', 'week'),
-    month: t('resolutions', 'month'),
-    year: t('resolutions', 'year'),
-  }
+  const resolutionLabels = useMemo<Record<string, string>>(
+    () => ({
+      day: t('resolutions', 'day'),
+      week: t('resolutions', 'week'),
+      month: t('resolutions', 'month'),
+      year: t('resolutions', 'year'),
+    }),
+    [t]
+  )
 
   // Load project data from PocketBase (only if authenticated)
   useEffect(() => {
@@ -235,7 +244,7 @@ export default function ProjectPage() {
                 <PrioritySelect
                   value={project.priority}
                   onChange={handlePriorityChange}
-                  disabled={!canEdit()}
+                  disabled={!canEdit}
                 />
               </div>
 
@@ -294,7 +303,7 @@ export default function ProjectPage() {
             </div>
 
             {/* Tool zone — brush alone as primary control */}
-            {canEdit() && (
+            {canEdit && (
               <div className="ml-auto flex items-center sm:pl-3 sm:border-l sm:border-paper-lines">
                 <BrushEditor />
               </div>
@@ -308,9 +317,9 @@ export default function ProjectPage() {
         <PlanningGrid />
       </main>
 
-      {isOwner && (
+      {isOwner && showShareModal && (
         <ShareProjectModal
-          isOpen={showShareModal}
+          isOpen
           onClose={() => setShowShareModal(false)}
           projectId={project.id}
           projectName={project.name}

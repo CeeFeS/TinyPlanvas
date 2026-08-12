@@ -183,12 +183,20 @@ export async function fetchSharedProject(token: string): Promise<ProjectFullData
 
   const projectId = project.id
 
-  const tasks = await pb.collection('tasks').getFullList<Task>(
-    shareListOpts(safe, {
-      filter: `project_id = "${projectId}"`,
-      sort: 'sort_order',
-    })
-  )
+  const [tasks, customColumns] = await Promise.all([
+    pb.collection('tasks').getFullList<Task>(
+      shareListOpts(safe, {
+        filter: `project_id = "${projectId}"`,
+        sort: 'sort_order',
+      })
+    ),
+    pb.collection('custom_columns').getFullList<CustomColumn>(
+      shareListOpts(safe, {
+        filter: `project_id = "${projectId}"`,
+        sort: 'sort_order',
+      })
+    ),
+  ])
 
   let resources: Resource[] = []
   if (tasks.length > 0) {
@@ -201,31 +209,24 @@ export async function fetchSharedProject(token: string): Promise<ProjectFullData
     )
   }
 
-  let allocations: Allocation[] = []
-  if (resources.length > 0) {
-    const resourceFilter = resources.map(r => `resource_id = "${r.id}"`).join(' || ')
-    allocations = await pb.collection('allocations').getFullList<Allocation>(
-      shareListOpts(safe, {
-        filter: resourceFilter,
-        sort: 'date',
-      })
-    )
-  }
-
-  const customColumns = await pb.collection('custom_columns').getFullList<CustomColumn>(
-    shareListOpts(safe, {
-      filter: `project_id = "${projectId}"`,
-      sort: 'sort_order',
-    })
-  )
-
-  let customValues: CustomValue[] = []
-  if (customColumns.length > 0) {
-    const filter = customColumns.map(c => `column_id = "${c.id}"`).join(' || ')
-    customValues = await pb.collection('custom_values').getFullList<CustomValue>(
-      shareListOpts(safe, { filter })
-    )
-  }
+  const [allocations, customValues] = await Promise.all([
+    resources.length > 0
+      ? pb.collection('allocations').getFullList<Allocation>(
+          shareListOpts(safe, {
+            filter: resources.map(r => `resource_id = "${r.id}"`).join(' || '),
+            sort: 'date',
+            fields: ALLOCATION_FIELDS,
+          })
+        )
+      : Promise.resolve<Allocation[]>([]),
+    customColumns.length > 0
+      ? pb.collection('custom_values').getFullList<CustomValue>(
+          shareListOpts(safe, {
+            filter: customColumns.map(c => `column_id = "${c.id}"`).join(' || '),
+          })
+        )
+      : Promise.resolve<CustomValue[]>([]),
+  ])
 
   return {
     project,
@@ -301,6 +302,13 @@ export async function deleteResource(id: string): Promise<boolean> {
 
 // ==================== Allocations API ====================
 
+/**
+ * Allocations are by far the largest collection (one record per painted cell),
+ * so they are fetched without PocketBase's record metadata - that boilerplate
+ * would otherwise outweigh the payload itself.
+ */
+const ALLOCATION_FIELDS = 'id,resource_id,date,percentage,color_hex'
+
 export async function fetchAllocations(resourceIds: string[]): Promise<Allocation[]> {
   if (resourceIds.length === 0) return []
   
@@ -309,6 +317,7 @@ export async function fetchAllocations(resourceIds: string[]): Promise<Allocatio
   return await pb.collection('allocations').getFullList<Allocation>({
     filter,
     sort: 'date',
+    fields: ALLOCATION_FIELDS,
   })
 }
 
@@ -509,11 +518,15 @@ export async function fetchProjectFullData(projectId: string): Promise<ProjectFu
     throw new Error('Keine Berechtigung für dieses Projekt. Bitte den Projektbesitzer um Freigabe bitten.')
   }
   
-  // Fetch tasks
-  const tasks = await pb.collection('tasks').getFullList<Task>({
-    filter: `project_id = "${projectId}"`,
-    sort: 'sort_order',
-  })
+  // Tasks and custom columns don't depend on each other, so they go out
+  // together - the rest of the graph has to follow their ids.
+  const [tasks, customColumns] = await Promise.all([
+    pb.collection('tasks').getFullList<Task>({
+      filter: `project_id = "${projectId}"`,
+      sort: 'sort_order',
+    }),
+    fetchCustomColumns(projectId),
+  ])
   
   // Fetch resources for all tasks
   let resources: Resource[] = []
@@ -525,19 +538,17 @@ export async function fetchProjectFullData(projectId: string): Promise<ProjectFu
     })
   }
   
-  // Fetch allocations for all resources
-  let allocations: Allocation[] = []
-  if (resources.length > 0) {
-    const resourceFilter = resources.map(r => `resource_id = "${r.id}"`).join(' || ')
-    allocations = await pb.collection('allocations').getFullList<Allocation>({
-      filter: resourceFilter,
-      sort: 'date',
-    })
-  }
-
-  // Fetch custom columns + their values
-  const customColumns = await fetchCustomColumns(projectId)
-  const customValues = await fetchCustomValues(customColumns.map(c => c.id))
+  // Allocations (by resource) and custom values (by column) are independent
+  const [allocations, customValues] = await Promise.all([
+    resources.length > 0
+      ? pb.collection('allocations').getFullList<Allocation>({
+          filter: resources.map(r => `resource_id = "${r.id}"`).join(' || '),
+          sort: 'date',
+          fields: ALLOCATION_FIELDS,
+        })
+      : Promise.resolve<Allocation[]>([]),
+    fetchCustomValues(customColumns.map(c => c.id)),
+  ])
 
   return { project, tasks, resources, allocations, customColumns, customValues, userPermission }
 }

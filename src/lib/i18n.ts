@@ -267,11 +267,17 @@ export const translations = {
     expandAll: { de: 'Alle ausklappen', en: 'Expand all' },
     collapseAll: { de: 'Alle einklappen', en: 'Collapse all' },
     newTask: { de: 'Neue Aufgabe...', en: 'New task...' },
-    newResource: { de: '+ Ressource...', en: '+ Resource...' },
+    newSubtask: { de: 'Neue Unteraufgabe...', en: 'New subtask...' },
+    addSubtask: { de: 'Unteraufgabe hinzufügen', en: 'Add subtask' },
+    indentHint: { de: 'Tab = einrücken, Umschalt+Tab = ausrücken', en: 'Tab to indent, Shift+Tab to outdent' },
+    autoNumbered: { de: 'Nummer wird automatisch vergeben', en: 'Numbered automatically' },
+    newResource: { de: 'Neue Ressource...', en: 'New resource...' },
+    pressEnterToAdd: { de: 'Enter zum Hinzufügen', en: 'Press Enter to add' },
     clickToEdit: { de: 'Klicken zum Bearbeiten', en: 'Click to edit' },
     deleteTask: { de: 'Aufgabe löschen', en: 'Delete task' },
     deleteResource: { de: 'Ressource löschen', en: 'Delete resource' },
     deleteTaskConfirm: { de: 'wirklich löschen? Alle zugehörigen Ressourcen werden ebenfalls gelöscht.', en: 'really delete? All associated resources will also be deleted.' },
+    deleteTaskWithSubtasksConfirm: { de: 'wirklich löschen? Unteraufgaben und alle zugehörigen Ressourcen werden ebenfalls gelöscht.', en: 'really delete? Subtasks and all associated resources will also be deleted.' },
     deleteResourceConfirm: { de: 'wirklich löschen?', en: 'really delete?' },
     clickToAssign: { de: 'Klicken zum Zuweisen', en: 'Click to assign' },
     resourceSummary: { de: 'Ressourcen-Übersicht', en: 'Resource Summary' },
@@ -307,8 +313,8 @@ export const translations = {
     clickToView: { de: 'Klicken zum Anzeigen', en: 'Click to view' },
     clickForMore: { de: 'Für mehr klicken', en: 'Click for more' },
     empty: { de: 'Leer', en: 'Empty' },
-    modeMarkdown: { de: 'Markdown', en: 'Markdown' },
-    modeRendered: { de: 'Gerendert', en: 'Rendered' },
+    modeEdit: { de: 'Bearbeiten', en: 'Edit' },
+    modeView: { de: 'Lesen', en: 'View' },
     emptyContent: { de: 'Noch nichts eingegeben …', en: 'Nothing entered yet …' },
     placeholder: { de: 'Text eingeben … Markdown & Zeilenumbrüche werden unterstützt.', en: 'Enter text … Markdown & line breaks are supported.' },
     markdownHint: { de: 'Markdown wird unterstützt · Strg/Cmd+Enter zum Speichern', en: 'Markdown supported · Ctrl/Cmd+Enter to save' },
@@ -420,14 +426,6 @@ export function t(
     return key
   }
   return translation[lang] || translation.en || key
-}
-
-// Date locale helper
-export function getDateLocale(lang: Language) {
-  if (lang === 'de') {
-    return import('date-fns/locale').then(m => m.de)
-  }
-  return import('date-fns/locale').then(m => m.enUS)
 }
 
 // Locale string for date formatting

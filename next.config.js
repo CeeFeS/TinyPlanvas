@@ -18,6 +18,17 @@ const nextConfig = {
     // Optimize package imports
     optimizePackageImports: ['lucide-react', 'date-fns'],
   },
+
+  compiler: {
+    // Strip the diagnostic logging from production bundles; warnings and
+    // errors stay so real problems are still visible in the console.
+    removeConsole: process.env.NODE_ENV === 'production'
+      ? { exclude: ['error', 'warn'] }
+      : false,
+  },
+
+  // Powered-by header is pure overhead on every response
+  poweredByHeader: false,
 }
 
 module.exports = nextConfig

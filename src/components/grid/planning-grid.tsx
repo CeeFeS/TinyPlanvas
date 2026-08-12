@@ -1,8 +1,14 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
-import { Plus, ChevronRight, ChevronLeft, GripVertical, ChevronsUpDown, ChevronsDownUp, Trash2 } from 'lucide-react'
-import { useProjectStore } from '@/store/project-store'
+import { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react'
+import { Plus, ChevronRight, ChevronLeft, GripVertical, ChevronsUpDown, ChevronsDownUp, Trash2, CornerDownLeft } from 'lucide-react'
+import {
+  useProjectStore,
+  useProjectActions,
+  useCanEdit,
+  selectCanEdit,
+  findResourceInTree,
+} from '@/store/project-store'
 import { useTranslation } from '@/lib/language-context'
 import { 
   cn, 
@@ -10,9 +16,15 @@ import {
   formatTimeSlotHeader, 
   formatTimeSlotGroup,
   dateToSlotKey,
+  buildSlotKeys,
   percentageToOpacity,
   getContrastTextColor,
+  mixAllocationColors,
   computeTaskAggregation,
+  mergeTaskComputed,
+  flattenTasksWithChildren,
+  generateNextDisplayId,
+  generateNextSubtaskDisplayId,
 } from '@/lib/utils'
 import { format, parseISO, addYears, addMonths, startOfYear, startOfMonth, endOfYear, endOfMonth, isAfter, isBefore } from 'date-fns'
 import type { TaskWithAggregation, ResourceWithAllocations, Resolution, CustomColumn, CustomRowType } from '@/lib/types'
@@ -186,42 +198,53 @@ const END_COLUMN_WIDTH = 88    // End (yyyy-mm-dd)
 const SUM_COLUMN_WIDTH = 56    // Σ (Sum)
 const MIN_ALLOCATION_WIDTH = 56 // Min allocation
 const MAX_ALLOCATION_WIDTH = 56 // Max allocation
+const MIN_SLOT_WIDTH = 28 // Narrowest a time-slot column may get before the grid scrolls
 const CUSTOM_COL_WIDTH = 180 // Default custom column width (fallback when unset)
 const MIN_CUSTOM_COL_WIDTH = 100 // Min custom column width when resizing
 const MAX_CUSTOM_COL_WIDTH = 600 // Max custom column width when resizing
 const ADD_COL_WIDTH = 44 // "Add column" control width
 
+/**
+ * Frozen columns (task/resource) must not eat the whole screen on small
+ * monitors - every pixel they take is one the time slots cannot use, which is
+ * what pushes the allocation chips into a horizontal scroll. The widths follow
+ * the viewport until the user resizes a column by hand.
+ */
+function responsiveColumnWidths(viewportWidth: number): { task: number; resource: number } {
+  if (viewportWidth < 1024) return { task: 112, resource: 96 }
+  if (viewportWidth < 1280) return { task: 132, resource: 112 }
+  if (viewportWidth < 1600) return { task: 156, resource: 132 }
+  return { task: DEFAULT_TASK_WIDTH, resource: DEFAULT_RESOURCE_WIDTH }
+}
+
 export function PlanningGrid() {
   const { t, dateLocale, language } = useTranslation()
+
+  // Subscribe to individual slices only: painting a cell must not re-render the
+  // grid because of unrelated state (presence heartbeats, brush changes, …).
+  const project = useProjectStore((s) => s.project)
+  const tasksWithData = useProjectStore((s) => s.tasksWithData)
+  const customColumns = useProjectStore((s) => s.customColumns)
+  const customValues = useProjectStore((s) => s.customValues)
+  const hasEditPermission = useCanEdit()
+  const projectId = project?.id
+
+  // Actions never change identity, so reading them costs no subscription.
   const {
-    project,
-    tasksWithData,
-    activeBrush,
-    isPainting,
-    setIsPainting,
-    setAllocation,
-    setAllocationAsync,
-    removeAllocation,
-    removeAllocationAsync,
     createTaskAsync,
     createResourceAsync,
     updateTask,
     updateTaskAsync,
+    moveTaskAsync,
     updateResource,
     updateResourceAsync,
     deleteTaskAsync,
     deleteResourceAsync,
-    canEdit,
-    customColumns,
-    customValues,
     createCustomColumnAsync,
     updateCustomColumnAsync,
     deleteCustomColumnAsync,
     setCustomValueAsync,
-  } = useProjectStore()
-  
-  // Check if user has edit permission
-  const hasEditPermission = canEdit()
+  } = useProjectActions()
 
   // ==================== Custom Columns ====================
   const sortedCustomColumns = useMemo(
@@ -328,27 +351,6 @@ export function PlanningGrid() {
   // aligned even when their first rows differ in height.
   const gridHeadRow1Ref = useRef<HTMLTableRowElement>(null)
   const summaryHeadRow1Ref = useRef<HTMLTableRowElement>(null)
-  useEffect(() => {
-    const rows = [gridHeadRow1Ref.current, summaryHeadRow1Ref.current].filter(
-      (r): r is HTMLTableRowElement => r != null
-    )
-    if (rows.length === 0) return
-    const observers: ResizeObserver[] = []
-    for (const row of rows) {
-      const table = row.closest('table') as HTMLElement | null
-      if (!table) continue
-      const update = () =>
-        table.style.setProperty(
-          '--row1-h',
-          `${Math.round(row.getBoundingClientRect().height)}px`
-        )
-      update()
-      const ro = new ResizeObserver(update)
-      ro.observe(row)
-      observers.push(ro)
-    }
-    return () => observers.forEach((o) => o.disconnect())
-  }, [project, showResourceSummary, tasksWithData])
 
   // Per-column filters (empty set = no filter for that column). Custom columns
   // are intentionally not filterable.
@@ -363,13 +365,24 @@ export function PlanningGrid() {
   // Min allocation per resource name (default 0%)
   const [minAllocationByResource, setMinAllocationByResource] = useState<Map<string, number>>(new Map())
   
-  // Cursor follower state - only visible over paint area (time slots)
-  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
-  const [isOverPaintArea, setIsOverPaintArea] = useState(false)
-
-  // Column widths state
+  // Column widths state - start at the desktop defaults (SSR-safe) and adapt to
+  // the actual viewport in the effect below.
   const [taskColumnWidth, setTaskColumnWidth] = useState(DEFAULT_TASK_WIDTH)
   const [resourceColumnWidth, setResourceColumnWidth] = useState(DEFAULT_RESOURCE_WIDTH)
+  // Once a column was dragged, the user's width wins over the responsive one.
+  const hasManualColumnWidth = useRef(false)
+
+  useEffect(() => {
+    const applyResponsiveWidths = () => {
+      if (hasManualColumnWidth.current) return
+      const { task, resource } = responsiveColumnWidths(window.innerWidth)
+      setTaskColumnWidth(task)
+      setResourceColumnWidth(resource)
+    }
+    applyResponsiveWidths()
+    window.addEventListener('resize', applyResponsiveWidths)
+    return () => window.removeEventListener('resize', applyResponsiveWidths)
+  }, [])
 
   // Calculate sticky positions
   const taskColumnLeft = ID_COLUMN_WIDTH
@@ -401,6 +414,13 @@ export function PlanningGrid() {
       project.resolution
     )
   }, [project, windowStart, windowEnd])
+
+  // Slot keys are the hottest value in the grid - every cell of every row needs
+  // one. Deriving them once per window keeps them out of the render path.
+  const slotKeys = useMemo(
+    () => (project ? buildSlotKeys(timeSlots, project.resolution) : []),
+    [timeSlots, project]
+  )
 
   // Navigation handlers
   const canGoBack = timeWindowOffset > 0
@@ -449,8 +469,8 @@ export function PlanningGrid() {
   const resourceSummaryByName = useMemo(() => {
     if (!project) return []
 
-    // Collect all resources from all tasks
-    const allResources = tasksWithData.flatMap(t => t.resources)
+    // Collect all resources from root tasks and subtasks
+    const allResources = flattenTasksWithChildren(tasksWithData).flatMap(t => t.resources)
     
     // Group by resource name
     const groupedByName = new Map<string, {
@@ -508,6 +528,31 @@ export function PlanningGrid() {
     return all.filter((g) => resourceFilter.has(g.name))
   }, [project, tasksWithData, resourceFilter])
 
+  // The observer itself reacts to height changes, so this only needs to re-run
+  // when a header row is (un)mounted - not on every data change.
+  const hasSummaryRows = resourceSummaryByName.length > 0
+  useEffect(() => {
+    const rows = [gridHeadRow1Ref.current, summaryHeadRow1Ref.current].filter(
+      (r): r is HTMLTableRowElement => r != null
+    )
+    if (rows.length === 0) return
+    const observers: ResizeObserver[] = []
+    for (const row of rows) {
+      const table = row.closest('table') as HTMLElement | null
+      if (!table) continue
+      const update = () =>
+        table.style.setProperty(
+          '--row1-h',
+          `${Math.round(row.getBoundingClientRect().height)}px`
+        )
+      update()
+      const ro = new ResizeObserver(update)
+      ro.observe(row)
+      observers.push(ro)
+    }
+    return () => observers.forEach((o) => o.disconnect())
+  }, [projectId, showResourceSummary, hasSummaryRows])
+
   // Slot key of "today" - used to highlight the current time column
   const currentSlotKey = useMemo(
     () => (project ? dateToSlotKey(new Date(), project.resolution) : ''),
@@ -518,7 +563,7 @@ export function PlanningGrid() {
   const filterValues = useMemo(() => {
     const tasks = new Set<string>()
     const resources = new Set<string>()
-    for (const task of tasksWithData) {
+    for (const task of flattenTasksWithChildren(tasksWithData)) {
       tasks.add(task.name)
       for (const r of task.resources) {
         resources.add(r.name)
@@ -536,36 +581,77 @@ export function PlanningGrid() {
   // Tasks with all active column filters applied. Resource-level filters reduce
   // each task's resources (aggregates recomputed); tasks without any remaining
   // resource - or not matching the task filter - are hidden.
+  // Parent matches if itself or any child matches the task name filter.
   const filteredTasks = useMemo(() => {
     if (taskFilter.size === 0 && !anyResourceLevelFilter) return tasksWithData
+
+    const applyResourceFilter = (task: TaskWithAggregation): TaskWithAggregation | null => {
+      if (!anyResourceLevelFilter) return task
+      const resources = task.resources.filter((r) => resourceFilter.has(r.name))
+      if (resources.length === 0 && task.children.length === 0) return null
+      const filteredChildren: TaskWithAggregation[] = []
+      for (const child of task.children) {
+        const childResources = child.resources.filter((r) => resourceFilter.has(r.name))
+        if (childResources.length === 0) continue
+        filteredChildren.push({
+          ...child,
+          resources: childResources,
+          children: [],
+          computed: computeTaskAggregation(childResources),
+        })
+      }
+
+      if (resources.length === 0 && filteredChildren.length === 0) return null
+
+      let computed = computeTaskAggregation(resources)
+      for (const child of filteredChildren) {
+        computed = mergeTaskComputed(computed, child.computed)
+      }
+      return { ...task, resources, children: filteredChildren, computed }
+    }
+
     const result: TaskWithAggregation[] = []
     for (const task of tasksWithData) {
-      if (taskFilter.size > 0 && !taskFilter.has(task.name)) continue
-      if (!anyResourceLevelFilter) {
-        result.push(task)
-        continue
-      }
-      const resources = task.resources.filter((r) => {
-        if (resourceFilter.size > 0 && !resourceFilter.has(r.name)) return false
-        return true
-      })
-      if (resources.length === 0) continue
-      result.push({ ...task, resources, computed: computeTaskAggregation(resources) })
+      const selfMatch = taskFilter.size === 0 || taskFilter.has(task.name)
+      const matchingChildren =
+        taskFilter.size === 0
+          ? task.children
+          : task.children.filter((c) => taskFilter.has(c.name))
+
+      if (!selfMatch && matchingChildren.length === 0) continue
+
+      const scoped: TaskWithAggregation =
+        selfMatch
+          ? task
+          : {
+              ...task,
+              children: matchingChildren,
+              // Parent row still shown as container; rollup from matching children (+ own resources)
+              computed: matchingChildren.reduce(
+                (acc, c) => mergeTaskComputed(acc, c.computed),
+                computeTaskAggregation(task.resources)
+              ),
+            }
+
+      const filtered = applyResourceFilter(scoped)
+      if (filtered) result.push(filtered)
     }
     return result
   }, [tasksWithData, taskFilter, resourceFilter, anyResourceLevelFilter])
 
   // Handle column resize
   const handleTaskColumnResize = useCallback((delta: number) => {
+    hasManualColumnWidth.current = true
     setTaskColumnWidth(w => Math.max(MIN_TASK_WIDTH, w + delta))
   }, [])
 
   const handleResourceColumnResize = useCallback((delta: number) => {
+    hasManualColumnWidth.current = true
     setResourceColumnWidth(w => Math.max(MIN_RESOURCE_WIDTH, w + delta))
   }, [])
 
   // Toggle task expansion
-  const toggleTask = (taskId: string) => {
+  const toggleTask = useCallback((taskId: string) => {
     setExpandedTasks(prev => {
       const next = new Set(prev)
       if (next.has(taskId)) {
@@ -575,117 +661,132 @@ export function PlanningGrid() {
       }
       return next
     })
-  }
+  }, [])
 
-  // Expand all tasks
+  const allExpandableIds = useMemo(
+    () => flattenTasksWithChildren(tasksWithData).map(t => t.id),
+    [tasksWithData]
+  )
+
+  // Expand all tasks (roots + subtasks)
   const expandAll = useCallback(() => {
-    setExpandedTasks(new Set(tasksWithData.map(t => t.id)))
-  }, [tasksWithData])
+    setExpandedTasks(new Set(allExpandableIds))
+  }, [allExpandableIds])
 
   // Collapse all tasks
   const collapseAll = useCallback(() => {
     setExpandedTasks(new Set())
   }, [])
 
+  // Drop ids of deleted tasks so the expand/collapse state stays truthful
+  useEffect(() => {
+    setExpandedTasks(prev => {
+      if (prev.size === 0) return prev
+      const valid = new Set(allExpandableIds)
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id)
+      }
+      return next.size === prev.size ? prev : next
+    })
+  }, [allExpandableIds])
+
   // Check if all are expanded or collapsed
-  const allExpanded = tasksWithData.length > 0 && expandedTasks.size === tasksWithData.length
+  const allExpanded =
+    allExpandableIds.length > 0 && allExpandableIds.every(id => expandedTasks.has(id))
   const allCollapsed = expandedTasks.size === 0
 
   // Track last clicked cell to detect double-click on same cell
   const lastClickedCell = useRef<{ resourceId: string; slotKey: string } | null>(null)
 
-  // Handle allocation click (paint mode) - with async persistence
-  const handleCellClick = useCallback((resourceId: string, date: Date) => {
-    if (!project || !hasEditPermission) return
-    
-    const slotKey = dateToSlotKey(date, project.resolution)
-    
-    const resource = tasksWithData
-      .flatMap(t => t.resources)
-      .find(r => r.id === resourceId)
-    
+  // Painting reads the live store instead of closing over it, so the handlers
+  // keep a stable identity while dragging across cells. Otherwise every painted
+  // cell would hand new callbacks to all rows and defeat their memoization.
+  const handleCellClick = useCallback((resourceId: string, slotKey: string) => {
+    const store = useProjectStore.getState()
+    const { project, activeBrush, tasksWithData } = store
+    if (!project || !selectCanEdit(store)) return
+
+    const resource = findResourceInTree(tasksWithData, resourceId)
     const existingAllocation = resource?.allocationMap.get(slotKey)
     const isSameCell = lastClickedCell.current?.resourceId === resourceId && 
                        lastClickedCell.current?.slotKey === slotKey
-    
-    if (existingAllocation) {
-      // Cell has a value
-      if (isSameCell) {
-        // Second click on same cell -> delete
-        removeAllocation(resourceId, slotKey)
-        removeAllocationAsync(resourceId, slotKey).catch(console.error)
-        lastClickedCell.current = null
-      } else if (existingAllocation.percentage === activeBrush.percentage &&
-                 existingAllocation.color_hex === activeBrush.colorHex) {
-        // Same value as brush -> delete
-        removeAllocation(resourceId, slotKey)
-        removeAllocationAsync(resourceId, slotKey).catch(console.error)
-        lastClickedCell.current = { resourceId, slotKey }
-      } else {
-        // Different value -> replace with brush
-        setAllocation(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex)
-        setAllocationAsync(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex).catch(console.error)
-        lastClickedCell.current = { resourceId, slotKey }
-      }
-    } else {
+
+    const remove = () => {
+      store.removeAllocation(resourceId, slotKey)
+      store.removeAllocationAsync(resourceId, slotKey).catch(console.error)
+    }
+    const paint = () => {
+      store.setAllocation(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex)
+      store
+        .setAllocationAsync(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex)
+        .catch(console.error)
+    }
+
+    if (!existingAllocation) {
       // Empty cell -> set brush value
-      setAllocation(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex)
-      setAllocationAsync(resourceId, slotKey, activeBrush.percentage, activeBrush.colorHex).catch(console.error)
+      paint()
       lastClickedCell.current = { resourceId, slotKey }
+      return
     }
-  }, [project, tasksWithData, activeBrush, setAllocation, setAllocationAsync, removeAllocation, removeAllocationAsync, hasEditPermission])
 
-  // Handle mouse events for painting
-  const handleMouseDown = useCallback((resourceId: string, date: Date) => {
-    if (!hasEditPermission) return
-    setIsPainting(true)
-    handleCellClick(resourceId, date)
-  }, [setIsPainting, handleCellClick, hasEditPermission])
-
-  const handleMouseEnter = useCallback((resourceId: string, date: Date) => {
-    if (isPainting) {
-      handleCellClick(resourceId, date)
+    if (isSameCell) {
+      // Second click on same cell -> delete
+      remove()
+      lastClickedCell.current = null
+      return
     }
-  }, [isPainting, handleCellClick])
+
+    if (
+      existingAllocation.percentage === activeBrush.percentage &&
+      existingAllocation.color_hex === activeBrush.colorHex
+    ) {
+      // Same value as brush -> delete
+      remove()
+    } else {
+      // Different value -> replace with brush
+      paint()
+    }
+    lastClickedCell.current = { resourceId, slotKey }
+  }, [])
+
+  // Handle mouse events for painting. Rows delegate `mouseover`, which can fire
+  // several times within one cell, so the last painted cell is tracked to keep a
+  // drag from toggling the same cell twice.
+  const lastPaintedCell = useRef<string | null>(null)
+
+  const handleMouseDown = useCallback((resourceId: string, slotKey: string) => {
+    const store = useProjectStore.getState()
+    if (!selectCanEdit(store)) return
+    lastPaintedCell.current = `${resourceId}|${slotKey}`
+    store.setIsPainting(true)
+    handleCellClick(resourceId, slotKey)
+  }, [handleCellClick])
+
+  const handleMouseEnter = useCallback((resourceId: string, slotKey: string) => {
+    if (!useProjectStore.getState().isPainting) return
+    const cell = `${resourceId}|${slotKey}`
+    if (lastPaintedCell.current === cell) return
+    lastPaintedCell.current = cell
+    handleCellClick(resourceId, slotKey)
+  }, [handleCellClick])
 
   const handleMouseUp = useCallback(() => {
-    setIsPainting(false)
-  }, [setIsPainting])
+    useProjectStore.getState().setIsPainting(false)
+  }, [])
 
   // Calculate fixed columns width (before time slots) - includes custom columns
   const fixedColumnsWidth = ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth
 
-  // Cursor follower handlers - only for paint area when user can edit
-  const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!hasEditPermission) {
-      setIsOverPaintArea(false)
-      setCursorPos(null)
-      return
-    }
-
-    setCursorPos({ x: e.clientX, y: e.clientY })
-
-    // Check if mouse is over the time slot area (right of the frozen columns)
-    const scrollContainer = scrollRef.current
-    if (scrollContainer) {
-      const scrollRect = scrollContainer.getBoundingClientRect()
-      const scrollLeft = scrollContainer.scrollLeft
-      const relativeX = e.clientX - scrollRect.left + scrollLeft
-      setIsOverPaintArea(relativeX >= fixedColumnsWidth)
-    }
-  }, [fixedColumnsWidth, hasEditPermission])
-
   const handleGridMouseLeave = useCallback(() => {
-    setIsOverPaintArea(false)
-    setCursorPos(null)
-    setIsPainting(false)
-  }, [setIsPainting])
+    useProjectStore.getState().setIsPainting(false)
+  }, [])
 
-  // Add new task (with async persistence)
+  // Add new root task (with async persistence)
   const handleAddTask = async () => {
     if (!newTaskName.trim() || !project || !hasEditPermission) return
     
-    const newDisplayId = String(tasksWithData.length + 1)
+    const newDisplayId = generateNextDisplayId(tasksWithData.map(t => t.display_id))
     const taskName = newTaskName.trim()
     setNewTaskName('')
     
@@ -698,16 +799,60 @@ export function PlanningGrid() {
     }
   }
 
-  // Add new resource to task (with async persistence)
-  const handleAddResource = async (taskId: string, name: string) => {
-    if (!name.trim() || !hasEditPermission) return
-    
+  // Add subtask under a root task
+  const handleAddSubtask = useCallback(async (parentId: string, name: string) => {
+    const store = useProjectStore.getState()
+    if (!name.trim() || !store.project || !selectCanEdit(store)) return
+
+    const parent = store.tasksWithData.find(t => t.id === parentId)
+    if (!parent) return
+
+    const displayId = generateNextSubtaskDisplayId(
+      parent.display_id,
+      parent.children.map(c => c.display_id)
+    )
+
     try {
-      await createResourceAsync(taskId, name.trim())
+      const newTask = await store.createTaskAsync(store.project.id, displayId, name.trim(), parentId)
+      setExpandedTasks(prev => new Set([...prev, parentId, newTask.id]))
+    } catch (error) {
+      console.error('Failed to create subtask:', error)
+    }
+  }, [])
+
+  // Tab: make the task a subtask of the root task above it
+  const handleIndentTask = useCallback(async (taskId: string) => {
+    const { tasksWithData: tasks, moveTaskAsync: move } = useProjectStore.getState()
+    const index = tasks.findIndex(t => t.id === taskId)
+    if (index < 1) return // subtask, unknown, or no preceding sibling
+    if (tasks[index].children.length > 0) return // only one nesting level
+
+    const previous = tasks[index - 1]
+    const moved = await move(taskId, previous.id)
+    if (moved) {
+      setExpandedTasks(prev => new Set([...prev, previous.id]))
+    }
+  }, [])
+
+  // Shift+Tab: lift a subtask back to root level
+  const handleOutdentTask = useCallback(async (taskId: string) => {
+    const { tasksWithData: tasks, moveTaskAsync: move } = useProjectStore.getState()
+    const isSubtask = tasks.some(root => root.children.some(c => c.id === taskId))
+    if (!isSubtask) return
+    await move(taskId, null)
+  }, [])
+
+  // Add new resource to task (with async persistence)
+  const handleAddResource = useCallback(async (taskId: string, name: string) => {
+    const store = useProjectStore.getState()
+    if (!name.trim() || !selectCanEdit(store)) return
+
+    try {
+      await store.createResourceAsync(taskId, name.trim())
     } catch (error) {
       console.error('Failed to create resource:', error)
     }
-  }
+  }, [])
 
   // Add new custom column
   const handleAddColumn = async () => {
@@ -719,10 +864,54 @@ export function PlanningGrid() {
     }
   }
 
-  // Expand all tasks by default on first render only
+  // Min/max thresholds are keyed by resource name, so one stable handler pair
+  // serves every summary row.
+  const handleMinAllocationChange = useCallback((name: string, value: number) => {
+    setMinAllocationByResource(prev => new Map(prev).set(name, value))
+  }, [])
+
+  const handleMaxAllocationChange = useCallback((name: string, value: number) => {
+    setMaxAllocationByResource(prev => new Map(prev).set(name, value))
+  }, [])
+
+  // Row mutation handlers - kept stable so memoized rows only re-render when
+  // their own data changes.
+  const handleUpdateTask = useCallback(
+    (id: string, updates: Partial<TaskWithAggregation>) => {
+      updateTask(id, updates)
+      updateTaskAsync(id, updates).catch(console.error)
+    },
+    [updateTask, updateTaskAsync]
+  )
+
+  const handleUpdateResource = useCallback(
+    (id: string, updates: Partial<ResourceWithAllocations>) => {
+      updateResource(id, updates)
+      updateResourceAsync(id, updates).catch(console.error)
+    },
+    [updateResource, updateResourceAsync]
+  )
+
+  const handleDeleteTask = useCallback(
+    (id: string) => {
+      deleteTaskAsync(id).catch(console.error)
+    },
+    [deleteTaskAsync]
+  )
+
+  const handleDeleteResource = useCallback(
+    (id: string) => {
+      deleteResourceAsync(id).catch(console.error)
+    },
+    [deleteResourceAsync]
+  )
+
+  // On first load: expand leaf roots (show resources); keep parents with subtasks collapsed
   useEffect(() => {
     if (!hasInitializedExpand.current && tasksWithData.length > 0) {
-      setExpandedTasks(new Set(tasksWithData.map(t => t.id)))
+      setExpandedTasks(
+        new Set(tasksWithData.filter(t => t.children.length === 0).map(t => t.id))
+      )
       hasInitializedExpand.current = true
     }
   }, [tasksWithData])
@@ -734,25 +923,8 @@ export function PlanningGrid() {
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Cursor Follower - brush preview only when editing is allowed */}
-      {hasEditPermission && isOverPaintArea && cursorPos && (
-        <div
-          className="fixed pointer-events-none z-50 flex items-center gap-1.5"
-          style={{
-            left: cursorPos.x + 16,
-            top: cursorPos.y + 16,
-          }}
-        >
-          <div
-            className="w-5 h-5 rounded shadow-md border border-white/50"
-            style={{
-              backgroundColor: activeBrush.colorHex,
-              opacity: percentageToOpacity(activeBrush.percentage),
-            }}
-          />
-          <span className="text-xs font-mono bg-surface/90 px-1.5 py-0.5 rounded shadow-sm text-ink-light">
-            {activeBrush.percentage}%
-          </span>
-        </div>
+      {hasEditPermission && (
+        <BrushCursor scrollRef={scrollRef} fixedColumnsWidth={fixedColumnsWidth} />
       )}
       
       <div ref={scrollRef} className="planvas-scroll flex-1 min-h-0 overflow-auto">
@@ -760,7 +932,6 @@ export function PlanningGrid() {
         ref={gridRef}
         className="paper-card planvas-grid-card"
         onMouseUp={handleMouseUp}
-        onMouseMove={handleGridMouseMove}
         onMouseLeave={handleGridMouseLeave}
       >
         {/* 
@@ -773,7 +944,7 @@ export function PlanningGrid() {
           className="planvas-sticky-head w-full"
           style={{ 
             tableLayout: 'fixed',
-            minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * 28)
+            minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * MIN_SLOT_WIDTH)
           }}
         >
           {/* Colgroup for column widths */}
@@ -826,6 +997,7 @@ export function PlanningGrid() {
                           : 'text-ink-faded hover:text-ink hover:bg-paper-warm'
                       )}
                       title={t('grid', 'expandAll')}
+                      aria-label={t('grid', 'expandAll')}
                     >
                       <ChevronsUpDown size={14} />
                     </button>
@@ -839,6 +1011,7 @@ export function PlanningGrid() {
                           : 'text-ink-faded hover:text-ink hover:bg-paper-warm'
                       )}
                       title={t('grid', 'collapseAll')}
+                      aria-label={t('grid', 'collapseAll')}
                     >
                       <ChevronsDownUp size={14} />
                     </button>
@@ -897,7 +1070,7 @@ export function PlanningGrid() {
                 <th 
                   key={groupIndex}
                   colSpan={group.slots.length}
-                  className="bg-paper-cream z-10 text-left px-1 py-1 border-l border-paper-lines"
+                  className="bg-paper-cream z-10 text-left px-1 py-1 border-l border-paper-lines overflow-hidden"
                 >
                   <div className="flex items-center gap-1">
                     {/* Navigation Back - only on first group */}
@@ -917,7 +1090,7 @@ export function PlanningGrid() {
                       </button>
                     )}
                     
-                    <span className="font-hand text-xs text-ink-light flex-1">
+                    <span className="font-hand text-xs text-ink-light flex-1 min-w-0 truncate">
                       {group.label}
                     </span>
                     
@@ -966,19 +1139,19 @@ export function PlanningGrid() {
               ))}
               {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines"></th>}
               
-              {timeSlots.map((slot, i) => {
-                const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
-                return (
-                  <th 
-                    key={i}
-                    className={cn('time-slot-header bg-paper-cream z-10', isCurrent && 'time-slot-current')}
-                  >
-                    <span className="font-mono text-[10px] text-ink-faded">
-                      {formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}
-                    </span>
-                  </th>
-                )
-              })}
+              {timeSlots.map((slot, i) => (
+                <th 
+                  key={i}
+                  className={cn(
+                    'time-slot-header bg-paper-cream z-10',
+                    slotKeys[i] === currentSlotKey && 'time-slot-current'
+                  )}
+                >
+                  <div className="time-slot-label">
+                    <span>{formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}</span>
+                  </div>
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -988,26 +1161,20 @@ export function PlanningGrid() {
                 key={task.id}
                 task={task}
                 isExpanded={expandedTasks.has(task.id)}
-                onToggle={() => toggleTask(task.id)}
-                timeSlots={timeSlots}
-                resolution={project.resolution}
+                expandedTaskIds={expandedTasks}
+                onToggleTask={toggleTask}
+                slotKeys={slotKeys}
+                currentSlotKey={currentSlotKey}
                 onCellMouseDown={handleMouseDown}
                 onCellMouseEnter={handleMouseEnter}
                 onAddResource={handleAddResource}
-                onUpdateTask={(updates) => {
-                  updateTask(task.id, updates)
-                  updateTaskAsync(task.id, updates).catch(console.error)
-                }}
-                onUpdateResource={(id, updates) => {
-                  updateResource(id, updates)
-                  updateResourceAsync(id, updates).catch(console.error)
-                }}
-                onDeleteTask={() => {
-                  deleteTaskAsync(task.id).catch(console.error)
-                }}
-                onDeleteResource={(id) => {
-                  deleteResourceAsync(id).catch(console.error)
-                }}
+                onAddSubtask={handleAddSubtask}
+                onIndentTask={handleIndentTask}
+                onOutdentTask={handleOutdentTask}
+                onUpdateTask={handleUpdateTask}
+                onUpdateResource={handleUpdateResource}
+                onDeleteTask={handleDeleteTask}
+                onDeleteResource={handleDeleteResource}
                 taskColumnLeft={taskColumnLeft}
                 taskColumnWidth={taskColumnWidth}
                 resourceColumnLeft={resourceColumnLeft}
@@ -1038,20 +1205,28 @@ export function PlanningGrid() {
                       type="text"
                       value={newTaskName}
                       onChange={e => setNewTaskName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleAddTask()}
-                      onBlur={() => newTaskName && handleAddTask()}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleAddTask()
+                        if (e.key === 'Escape') setNewTaskName('')
+                      }}
                       placeholder={t('grid', 'newTask')}
                       className="input-notebook text-sm italic min-w-0 flex-1"
                     />
+                    {newTaskName.trim() && (
+                      <InlineAddConfirm
+                        onSubmit={handleAddTask}
+                        label={t('grid', 'pressEnterToAdd')}
+                      />
+                    )}
                   </div>
                 </td>
                 <td colSpan={3 + extraColCount} className="border-r border-paper-lines"></td>
-                {timeSlots.map((slot, i) => {
-                  const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
-                  return (
-                    <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')} />
-                  )
-                })}
+                {slotKeys.map((slotKey, i) => (
+                  <td
+                    key={i}
+                    className={cn('time-slot-cell p-0', slotKey === currentSlotKey && 'time-slot-current')}
+                  />
+                ))}
               </tr>
             )}
           </tbody>
@@ -1084,7 +1259,7 @@ export function PlanningGrid() {
               className="planvas-sticky-head w-full"
               style={{ 
                 tableLayout: 'fixed',
-                minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * 28)
+                minWidth: ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth + START_COLUMN_WIDTH + END_COLUMN_WIDTH + SUM_COLUMN_WIDTH + extraColsWidth + (timeSlots.length * MIN_SLOT_WIDTH)
               }}
             >
               {/* Colgroup must match main table exactly for column alignment.
@@ -1140,7 +1315,7 @@ export function PlanningGrid() {
                     <th 
                       key={groupIndex}
                       colSpan={group.slots.length}
-                      className="bg-paper-cream z-10 text-left px-1 py-1 border-l border-paper-lines"
+                      className="bg-paper-cream z-10 text-left px-1 py-1 border-l border-paper-lines overflow-hidden"
                     >
                       <div className="flex items-center gap-1">
                         {/* Navigation Back - only on first group */}
@@ -1160,7 +1335,7 @@ export function PlanningGrid() {
                           </button>
                         )}
                         
-                        <span className="font-hand text-xs text-ink-light flex-1">
+                        <span className="font-hand text-xs text-ink-light flex-1 min-w-0 truncate">
                           {group.label}
                         </span>
                         
@@ -1199,19 +1374,19 @@ export function PlanningGrid() {
                     <th key={col.id} className="bg-paper-cream z-10 border-r border-paper-lines" />
                   ))}
                   {showAddColumn && <th className="bg-paper-cream z-10 border-l border-paper-lines" />}
-                  {timeSlots.map((slot, i) => {
-                    const isCurrent = dateToSlotKey(slot, project.resolution) === currentSlotKey
-                    return (
-                      <th 
-                        key={i}
-                        className={cn('time-slot-header bg-paper-cream z-10', isCurrent && 'time-slot-current')}
-                      >
-                        <span className="font-mono text-[10px] text-ink-faded">
-                          {formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}
-                        </span>
-                      </th>
-                    )
-                  })}
+                  {timeSlots.map((slot, i) => (
+                    <th 
+                      key={i}
+                      className={cn(
+                        'time-slot-header bg-paper-cream z-10',
+                        slotKeys[i] === currentSlotKey && 'time-slot-current'
+                      )}
+                    >
+                      <div className="time-slot-label">
+                        <span>{formatTimeSlotHeader(slot, project.resolution, dateLocale, language)}</span>
+                      </div>
+                    </th>
+                  ))}
                 </tr>
               </thead>
 
@@ -1220,27 +1395,15 @@ export function PlanningGrid() {
                   <ResourceSummaryRow
                     key={summary.name}
                     summary={summary}
-                    timeSlots={timeSlots}
-                    resolution={project.resolution}
+                    slotKeys={slotKeys}
+                    currentSlotKey={currentSlotKey}
                     customColumns={sortedCustomColumns}
                     showAddColumn={showAddColumn}
                     summaryColumnWidth={ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth - MIN_ALLOCATION_WIDTH - MAX_ALLOCATION_WIDTH}
                     minAllocation={minAllocationByResource.get(summary.name) ?? 0}
                     maxAllocation={maxAllocationByResource.get(summary.name) ?? 100}
-                    onMinAllocationChange={(value) => {
-                      setMinAllocationByResource(prev => {
-                        const next = new Map(prev)
-                        next.set(summary.name, value)
-                        return next
-                      })
-                    }}
-                    onMaxAllocationChange={(value) => {
-                      setMaxAllocationByResource(prev => {
-                        const next = new Map(prev)
-                        next.set(summary.name, value)
-                        return next
-                      })
-                    }}
+                    onMinAllocationChange={handleMinAllocationChange}
+                    onMaxAllocationChange={handleMaxAllocationChange}
                   />
                 ))}
               </tbody>
@@ -1264,20 +1427,137 @@ export function PlanningGrid() {
   )
 }
 
+// ==================== Brush Cursor ====================
+
+/**
+ * Brush preview that follows the pointer over the paint area.
+ *
+ * Deliberately bypasses React state: routing `mousemove` through `useState`
+ * re-rendered the entire grid on every pointer movement. Position and
+ * visibility are written straight to the node inside one animation frame, so
+ * the whole interaction stays off the reconciler.
+ */
+function BrushCursor({
+  scrollRef,
+  fixedColumnsWidth,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement>
+  fixedColumnsWidth: number
+}) {
+  const activeBrush = useProjectStore((s) => s.activeBrush)
+  const elRef = useRef<HTMLDivElement>(null)
+  const widthRef = useRef(fixedColumnsWidth)
+  widthRef.current = fixedColumnsWidth
+
+  useEffect(() => {
+    const container = scrollRef.current
+    const el = elRef.current
+    if (!container || !el) return
+
+    let frame = 0
+    let clientX = 0
+    let clientY = 0
+    let inside = false
+
+    // Single read-then-write per frame keeps this out of layout thrashing.
+    const paint = () => {
+      frame = 0
+      const overPaintArea =
+        inside &&
+        clientX - container.getBoundingClientRect().left + container.scrollLeft >=
+          widthRef.current
+      el.style.transform = `translate3d(${clientX + 16}px, ${clientY + 16}px, 0)`
+      el.style.opacity = overPaintArea ? '1' : '0'
+    }
+
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(paint)
+    }
+
+    const handleMove = (e: MouseEvent) => {
+      clientX = e.clientX
+      clientY = e.clientY
+      inside = true
+      schedule()
+    }
+
+    const handleLeave = () => {
+      inside = false
+      schedule()
+    }
+
+    container.addEventListener('mousemove', handleMove, { passive: true })
+    container.addEventListener('mouseleave', handleLeave)
+
+    return () => {
+      container.removeEventListener('mousemove', handleMove)
+      container.removeEventListener('mouseleave', handleLeave)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [scrollRef])
+
+  return (
+    <div
+      ref={elRef}
+      aria-hidden
+      className="fixed left-0 top-0 pointer-events-none z-50 flex items-center gap-1.5 opacity-0"
+    >
+      <div
+        className="w-5 h-5 rounded shadow-md border border-white/50"
+        style={{
+          backgroundColor: activeBrush.colorHex,
+          opacity: percentageToOpacity(activeBrush.percentage),
+        }}
+      />
+      <span className="text-xs font-mono bg-surface/90 px-1.5 py-0.5 rounded shadow-sm text-ink-light">
+        {activeBrush.percentage}%
+      </span>
+    </div>
+  )
+}
+
+// ==================== Inline Add Helpers ====================
+
+/**
+ * Commit affordance for the inline "add" inputs. Creating a record always
+ * requires an explicit confirmation (Enter or this button) - clicking away
+ * never creates anything, it only keeps the typed draft.
+ */
+function InlineAddConfirm({ onSubmit, label }: { onSubmit: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      // Prevents the input from losing focus before the click is handled
+      onMouseDown={e => e.preventDefault()}
+      onClick={onSubmit}
+      className="p-0.5 rounded text-ink-faded hover:text-ink hover:bg-paper-lines transition-colors flex-shrink-0"
+      title={label}
+      aria-label={label}
+    >
+      <CornerDownLeft size={12} />
+    </button>
+  )
+}
+
 // ==================== Task Rows Component ====================
 
 interface TaskRowsProps {
   task: TaskWithAggregation
   isExpanded: boolean
-  onToggle: () => void
-  timeSlots: Date[]
-  resolution: 'day' | 'week' | 'month' | 'year'
-  onCellMouseDown: (resourceId: string, date: Date) => void
-  onCellMouseEnter: (resourceId: string, date: Date) => void
+  expandedTaskIds: Set<string>
+  onToggleTask: (taskId: string) => void
+  /** Pre-computed slot key per visible column (shared by all rows). */
+  slotKeys: string[]
+  currentSlotKey: string
+  onCellMouseDown: (resourceId: string, slotKey: string) => void
+  onCellMouseEnter: (resourceId: string, slotKey: string) => void
   onAddResource: (taskId: string, name: string) => void
-  onUpdateTask: (updates: Partial<TaskWithAggregation>) => void
+  onAddSubtask: (parentId: string, name: string) => void
+  onIndentTask: (taskId: string) => void
+  onOutdentTask: (taskId: string) => void
+  onUpdateTask: (id: string, updates: Partial<TaskWithAggregation>) => void
   onUpdateResource: (id: string, updates: Partial<ResourceWithAllocations>) => void
-  onDeleteTask: () => void
+  onDeleteTask: (id: string) => void
   onDeleteResource: (id: string) => void
   taskColumnLeft: number
   taskColumnWidth: number
@@ -1288,17 +1568,23 @@ interface TaskRowsProps {
   showAddColumn: boolean
   getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
   onOpenCustomCell: (target: CustomCellEditTarget) => void
+  /** When true, render as nested subtask row (no further nesting). */
+  isSubtask?: boolean
 }
 
-function TaskRows({
+function TaskRowsComponent({
   task,
   isExpanded,
-  onToggle,
-  timeSlots,
-  resolution,
+  expandedTaskIds,
+  onToggleTask,
+  slotKeys,
+  currentSlotKey,
   onCellMouseDown,
   onCellMouseEnter,
   onAddResource,
+  onAddSubtask,
+  onIndentTask,
+  onOutdentTask,
   onUpdateTask,
   onUpdateResource,
   onDeleteTask,
@@ -1312,77 +1598,68 @@ function TaskRows({
   showAddColumn,
   getCustomValue,
   onOpenCustomCell,
+  isSubtask = false,
 }: TaskRowsProps) {
   const { t } = useTranslation()
   const extraColCount = customColumns.length + (showAddColumn ? 1 : 0)
-  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [newResourceName, setNewResourceName] = useState('')
+  const [newSubtaskName, setNewSubtaskName] = useState('')
+  const [showSubtaskInput, setShowSubtaskInput] = useState(false)
+  const subtaskInputRef = useRef<HTMLInputElement>(null)
   const [editingTaskName, setEditingTaskName] = useState(false)
   const [editingDisplayId, setEditingDisplayId] = useState(false)
   const [taskName, setTaskName] = useState(task.name)
   const [displayId, setDisplayId] = useState(task.display_id)
 
-  // Helper function to mix colors based on percentages
-  const mixColors = (colorData: { color: string; percentage: number }[]): string => {
-    if (colorData.length === 0) return '#E8E4DD'
-    if (colorData.length === 1) return colorData[0].color
-    
-    // Calculate weighted average of RGB values
-    let totalWeight = 0
-    let r = 0, g = 0, b = 0
-    
-    for (const { color, percentage } of colorData) {
-      const hex = color.replace('#', '')
-      const cr = parseInt(hex.slice(0, 2), 16)
-      const cg = parseInt(hex.slice(2, 4), 16)
-      const cb = parseInt(hex.slice(4, 6), 16)
-      
-      r += cr * percentage
-      g += cg * percentage
-      b += cb * percentage
-      totalWeight += percentage
-    }
-    
-    if (totalWeight === 0) return '#E8E4DD'
-    
-    r = Math.round(r / totalWeight)
-    g = Math.round(g / totalWeight)
-    b = Math.round(b / totalWeight)
-    
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-  }
+  const hasChildren = !isSubtask && task.children.length > 0
+  // Task rows share the warm band; nesting is carried by indent guide + weight,
+  // resources stay on the plain surface. Sticky cells must be fully opaque.
+  const rowBg = 'bg-paper-warm'
+  const rowBgSoft = isSubtask ? 'bg-paper-warm/20' : 'bg-paper-warm/30'
 
-  // Aggregate allocation data for task row visualization
+  // Aggregate allocation data: own resources + (for parents) children resources
   const taskAllocationBySlot = useMemo(() => {
     const map = new Map<string, { total: number; colorData: { color: string; percentage: number }[]; mixedColor: string }>()
-    
-    for (const resource of task.resources) {
+    const resources = [
+      ...task.resources,
+      ...(!isSubtask ? task.children.flatMap(c => c.resources) : []),
+    ]
+
+    for (const resource of resources) {
       for (const [date, alloc] of resource.allocationMap) {
         const existing = map.get(date)
         if (existing) {
           existing.total += alloc.percentage
           existing.colorData.push({ color: alloc.color_hex, percentage: alloc.percentage })
         } else {
-          map.set(date, { 
-            total: alloc.percentage, 
+          map.set(date, {
+            total: alloc.percentage,
             colorData: [{ color: alloc.color_hex, percentage: alloc.percentage }],
-            mixedColor: ''
+            mixedColor: '',
           })
         }
       }
     }
-    
-    // Calculate mixed colors for each slot
-    for (const [date, data] of map) {
-      data.mixedColor = mixColors(data.colorData)
+
+    for (const [, data] of map) {
+      data.mixedColor = mixAllocationColors(data.colorData)
     }
-    
+
     return map
-  }, [task.resources])
+  }, [task.resources, task.children, isSubtask])
+
+  // Adopt remote changes, but never yank the text out from under an active edit
+  useEffect(() => {
+    if (!editingTaskName) setTaskName(task.name)
+  }, [task.name, editingTaskName])
+
+  useEffect(() => {
+    if (!editingDisplayId) setDisplayId(task.display_id)
+  }, [task.display_id, editingDisplayId])
 
   const handleSaveTaskName = () => {
     if (taskName.trim() && taskName !== task.name) {
-      onUpdateTask({ name: taskName.trim() })
+      onUpdateTask(task.id, { name: taskName.trim() })
     } else {
       setTaskName(task.name)
     }
@@ -1391,7 +1668,7 @@ function TaskRows({
 
   const handleSaveDisplayId = () => {
     if (displayId.trim() && displayId !== task.display_id) {
-      onUpdateTask({ display_id: displayId.trim() })
+      onUpdateTask(task.id, { display_id: displayId.trim() })
     } else {
       setDisplayId(task.display_id)
     }
@@ -1405,31 +1682,87 @@ function TaskRows({
     }
   }
 
+  const handleToggle = useCallback(() => onToggleTask(task.id), [onToggleTask, task.id])
+
+  // Enter commits and keeps the field open for the next entry, so several
+  // subtasks can be typed in a row.
+  const handleAddSubtaskSubmit = () => {
+    if (!newSubtaskName.trim()) return
+    onAddSubtask(task.id, newSubtaskName.trim())
+    setNewSubtaskName('')
+    if (!isExpanded) handleToggle()
+  }
+
+  const openSubtaskInput = () => {
+    if (!isExpanded) handleToggle()
+    setShowSubtaskInput(true)
+    requestAnimationFrame(() => subtaskInputRef.current?.focus())
+  }
+
+  const handleTaskNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSaveTaskName()
+      return
+    }
+    if (e.key === 'Escape') {
+      setTaskName(task.name)
+      setEditingTaskName(false)
+      return
+    }
+    // Outliner convention: Tab indents, Shift+Tab outdents
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      handleSaveTaskName()
+      if (e.shiftKey) {
+        onOutdentTask(task.id)
+      } else {
+        onIndentTask(task.id)
+      }
+    }
+  }
+
+  const deleteConfirmKey = hasChildren ? 'deleteTaskWithSubtasksConfirm' : 'deleteTaskConfirm'
+
   return (
     <>
-      {/* Task Row (Parent/Header) */}
-      <tr className="planvas-row-top bg-paper-warm/30 group">
+      {/* Task / Subtask header row */}
+      <tr className={cn('group', isSubtask ? 'planvas-row-subtask' : 'planvas-row-top', rowBgSoft)}>
         {/* ID Column */}
-        <td 
-          className="sticky bg-paper-warm z-20 border-r border-paper-lines px-2 py-2 text-center"
+        <td
+          className={cn('sticky z-20 border-r border-paper-lines px-1 py-2 text-center', rowBg)}
           style={{ left: 0, width: ID_COLUMN_WIDTH }}
         >
-          {editingDisplayId && canEdit ? (
+          {isSubtask ? (
+            // Subtask ids are derived from the parent + position, so they stay
+            // consistent when tasks are renamed, moved or deleted.
+            <span
+              className="font-mono text-xs text-ink-light block truncate"
+              title={`${task.display_id} · ${t('grid', 'autoNumbered')}`}
+            >
+              {task.display_id}
+            </span>
+          ) : editingDisplayId && canEdit ? (
             <input
               type="text"
               value={displayId}
               onChange={e => setDisplayId(e.target.value)}
               onBlur={handleSaveDisplayId}
-              onKeyDown={e => e.key === 'Enter' && handleSaveDisplayId()}
-              className="input-notebook w-full text-center font-mono text-sm"
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSaveDisplayId()
+                if (e.key === 'Escape') {
+                  setDisplayId(task.display_id)
+                  setEditingDisplayId(false)
+                }
+              }}
+              className="input-notebook w-full text-center font-mono text-xs"
               autoFocus
             />
           ) : (
-            <button 
+            <button
               onClick={() => canEdit && setEditingDisplayId(true)}
               className={cn(
-                "font-mono text-sm text-ink-light w-full truncate",
-                canEdit && "editable-text"
+                'font-mono text-xs text-ink-light w-full truncate',
+                canEdit && 'editable-text'
               )}
               title={canEdit ? t('grid', 'clickToEdit') : task.display_id}
               disabled={!canEdit}
@@ -1438,90 +1771,115 @@ function TaskRows({
             </button>
           )}
         </td>
-        
+
         {/* Task Name */}
-        <td 
-          className="sticky bg-paper-warm z-20 border-r border-paper-lines px-3 py-2 overflow-hidden"
+        <td
+          className={cn('sticky z-20 border-r border-paper-lines px-2 py-2 overflow-hidden', rowBg)}
           style={{ left: taskColumnLeft, width: taskColumnWidth }}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <button 
-              onClick={onToggle}
+          <div className={cn('flex items-center gap-1 min-w-0', isSubtask && 'pl-1.5')}>
+            {isSubtask && (
+              <span
+                className="w-0.5 self-stretch rounded-full bg-ink-faded/40 mr-1.5 flex-shrink-0"
+                aria-hidden
+              />
+            )}
+            <button
+              onClick={handleToggle}
+              aria-expanded={isExpanded}
+              aria-label={`${task.display_id} ${task.name}`}
               className="p-0.5 hover:bg-paper-lines rounded transition-colors flex-shrink-0"
             >
-              <ChevronRight 
-                size={16} 
+              <ChevronRight
+                size={isSubtask ? 14 : 16}
                 className={cn(
                   'text-ink-light transition-transform',
                   isExpanded && 'rotate-90'
-                )} 
+                )}
               />
             </button>
-            
+
             {editingTaskName && canEdit ? (
               <input
                 type="text"
                 value={taskName}
                 onChange={e => setTaskName(e.target.value)}
                 onBlur={handleSaveTaskName}
-                onKeyDown={e => e.key === 'Enter' && handleSaveTaskName()}
-                className="input-notebook font-medium min-w-0 flex-1"
+                onKeyDown={handleTaskNameKeyDown}
+                className={cn('input-notebook min-w-0 flex-1', !isSubtask && 'font-medium')}
                 autoFocus
               />
             ) : (
-              <button 
+              <button
                 onClick={() => canEdit && setEditingTaskName(true)}
                 className={cn(
-                  "font-medium text-ink text-left truncate min-w-0 flex-1",
-                  canEdit && "editable-text"
+                  'text-ink text-left truncate min-w-0 flex-1',
+                  !isSubtask && 'font-medium',
+                  isSubtask && 'text-sm',
+                  canEdit && 'editable-text'
                 )}
-                title={canEdit ? t('grid', 'clickToEdit') : task.name}
+                title={canEdit ? `${t('grid', 'clickToEdit')} · ${t('grid', 'indentHint')}` : task.name}
                 disabled={!canEdit}
               >
                 {task.name}
               </button>
             )}
-            
-            {/* Delete Task Button - only show if user can edit */}
+
+            {/* Add subtask (roots only) — expands and reveals the inline input */}
+            {canEdit && !isSubtask && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openSubtaskInput()
+                }}
+                className="p-1 rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-paper-lines text-ink-light transition-all flex-shrink-0"
+                title={t('grid', 'addSubtask')}
+                aria-label={t('grid', 'addSubtask')}
+              >
+                <Plus size={14} />
+              </button>
+            )}
+
             {canEdit && (
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (confirm(`${t('grid', 'task')} "${task.name}" ${t('grid', 'deleteTaskConfirm')}`)) {
-                    onDeleteTask()
+                  if (confirm(`${t('grid', 'task')} "${task.name}" ${t('grid', deleteConfirmKey)}`)) {
+                    onDeleteTask(task.id)
                   }
                 }}
-                className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all flex-shrink-0"
+                className="p-1 rounded opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all flex-shrink-0"
                 title={t('grid', 'deleteTask')}
+                aria-label={`${t('grid', 'deleteTask')}: ${task.name}`}
               >
                 <Trash2 size={14} />
               </button>
             )}
           </div>
         </td>
-        
+
         {/* Empty resource cell for task row */}
-        <td 
-          className="planvas-freeze-edge sticky bg-paper-warm z-20 border-r border-paper-lines"
+        <td
+          className={cn('planvas-freeze-edge sticky z-20 border-r border-paper-lines', rowBg)}
           style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
         />
-        
+
         {/* Aggregated Start Date */}
-        <td className="bg-paper-warm/30 border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap">
+        <td className={cn('border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap', rowBgSoft)}>
           <span className="font-mono text-xs text-ink-light">
             {task.computed.startDate || '—'}
           </span>
         </td>
-        
+
         {/* Aggregated End Date */}
-        <td className="bg-paper-warm/30 border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap">
+        <td className={cn('border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap', rowBgSoft)}>
           <span className="font-mono text-xs text-ink-light">
             {task.computed.endDate || '—'}
           </span>
         </td>
-        
+
         {/* Total Effort */}
-        <td className="bg-paper-warm/30 border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap">
+        <td className={cn('border-r border-paper-lines text-center px-2 py-2 whitespace-nowrap', rowBgSoft)}>
           <span className="font-mono text-xs font-medium text-ink">
             {task.computed.totalEffort > 0 ? `${task.computed.totalEffort}%` : '—'}
           </span>
@@ -1537,19 +1895,18 @@ function TaskRows({
             value={getCustomValue(col.id, 'task', task.id)}
             canEdit={canEdit}
             width={col.width ?? CUSTOM_COL_WIDTH}
-            variant="task"
+            variant={isSubtask ? 'resource' : 'task'}
             onOpen={onOpenCustomCell}
           />
         ))}
-        {showAddColumn && <td className="bg-paper-warm/30 border-l border-paper-lines" />}
-        
-        {/* Aggregated Time Cells - with chips and values like resources */}
-        {timeSlots.map((slot, i) => {
-          const slotKey = dateToSlotKey(slot, resolution)
+        {showAddColumn && <td className={cn('border-l border-paper-lines', rowBgSoft)} />}
+
+        {/* Aggregated Time Cells */}
+        {slotKeys.map((slotKey, i) => {
           const slotData = taskAllocationBySlot.get(slotKey)
           const hasValue = slotData && slotData.total > 0
           const isCurrent = slotKey === currentSlotKey
-          
+
           return (
             <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')}>
               <div className="allocation-cell">
@@ -1579,19 +1936,109 @@ function TaskRows({
         })}
       </tr>
 
-      {/* Resource Rows (Children) */}
+      {/* Expanded: subtasks (roots only) + own resources */}
       {isExpanded && (
         <>
+          {!isSubtask &&
+            task.children.map((child) => (
+              <TaskRows
+                key={child.id}
+                task={child}
+                isSubtask
+                isExpanded={expandedTaskIds.has(child.id)}
+                expandedTaskIds={expandedTaskIds}
+                onToggleTask={onToggleTask}
+                slotKeys={slotKeys}
+                currentSlotKey={currentSlotKey}
+                onCellMouseDown={onCellMouseDown}
+                onCellMouseEnter={onCellMouseEnter}
+                onAddResource={onAddResource}
+                onAddSubtask={onAddSubtask}
+                onIndentTask={onIndentTask}
+                onOutdentTask={onOutdentTask}
+                onUpdateTask={onUpdateTask}
+                onUpdateResource={onUpdateResource}
+                onDeleteTask={onDeleteTask}
+                onDeleteResource={onDeleteResource}
+                taskColumnLeft={taskColumnLeft}
+                taskColumnWidth={taskColumnWidth}
+                resourceColumnLeft={resourceColumnLeft}
+                resourceColumnWidth={resourceColumnWidth}
+                canEdit={canEdit}
+                customColumns={customColumns}
+                showAddColumn={showAddColumn}
+                getCustomValue={getCustomValue}
+                onOpenCustomCell={onOpenCustomCell}
+              />
+            ))}
+
+          {/* Inline new subtask input - only while adding, so no row is wasted */}
+          {canEdit && !isSubtask && showSubtaskInput && (
+            <tr className="planvas-row-subtask bg-paper-warm/20">
+              <td
+                className="sticky bg-paper-warm z-20 border-r border-paper-lines"
+                style={{ left: 0, width: ID_COLUMN_WIDTH }}
+              />
+              <td
+                className="sticky bg-paper-warm z-20 border-r border-paper-lines px-2 py-1 overflow-hidden"
+                style={{ left: taskColumnLeft, width: taskColumnWidth }}
+              >
+                <div className="flex items-center gap-1 min-w-0 pl-1.5">
+                  <span className="w-0.5 self-stretch rounded-full bg-ink-faded/40 mr-1.5 flex-shrink-0" aria-hidden />
+                  <Plus size={12} className="text-ink-faded flex-shrink-0" />
+                  <input
+                    ref={subtaskInputRef}
+                    type="text"
+                    value={newSubtaskName}
+                    onChange={e => setNewSubtaskName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleAddSubtaskSubmit()
+                      if (e.key === 'Escape') {
+                        setNewSubtaskName('')
+                        setShowSubtaskInput(false)
+                      }
+                    }}
+                    // Clicking away never creates anything - it only closes the
+                    // field when nothing was typed, so drafts are never lost.
+                    onBlur={() => {
+                      if (!newSubtaskName.trim()) setShowSubtaskInput(false)
+                    }}
+                    placeholder={t('grid', 'newSubtask')}
+                    aria-label={t('grid', 'addSubtask')}
+                    className="input-notebook text-sm italic text-ink-faded min-w-0 flex-1"
+                  />
+                  {newSubtaskName.trim() && (
+                    <InlineAddConfirm
+                      onSubmit={handleAddSubtaskSubmit}
+                      label={t('grid', 'pressEnterToAdd')}
+                    />
+                  )}
+                </div>
+              </td>
+              <td
+                className="planvas-freeze-edge sticky bg-paper-warm z-20 border-r border-paper-lines"
+                style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
+              />
+              <td colSpan={3 + extraColCount}></td>
+              {slotKeys.map((slotKey, i) => (
+                <td
+                  key={i}
+                  className={cn('time-slot-cell p-0', slotKey === currentSlotKey && 'time-slot-current')}
+                />
+              ))}
+            </tr>
+          )}
+
           {task.resources.map((resource) => (
             <ResourceRow
               key={resource.id}
               resource={resource}
-              timeSlots={timeSlots}
-              resolution={resolution}
+              slotKeys={slotKeys}
+              currentSlotKey={currentSlotKey}
               onCellMouseDown={onCellMouseDown}
               onCellMouseEnter={onCellMouseEnter}
-              onUpdateResource={(updates) => onUpdateResource(resource.id, updates)}
-              onDeleteResource={() => onDeleteResource(resource.id)}
+              onUpdateResource={onUpdateResource}
+              onDeleteResource={onDeleteResource}
               taskColumnLeft={taskColumnLeft}
               taskColumnWidth={taskColumnWidth}
               resourceColumnLeft={resourceColumnLeft}
@@ -1601,44 +2048,53 @@ function TaskRows({
               showAddColumn={showAddColumn}
               getCustomValue={getCustomValue}
               onOpenCustomCell={onOpenCustomCell}
+              indent={isSubtask}
             />
           ))}
-          
-          {/* Add Resource Row - only show if user can edit */}
+
+          {/* Add Resource Row */}
           {canEdit && (
             <tr className="hover:bg-paper-warm/30">
-              <td 
+              <td
                 className="sticky bg-surface z-20 border-r border-paper-lines"
                 style={{ left: 0, width: ID_COLUMN_WIDTH }}
               />
-              <td 
+              <td
                 className="sticky bg-surface z-20 border-r border-paper-lines"
                 style={{ left: taskColumnLeft, width: taskColumnWidth }}
               />
-              <td 
+              <td
                 className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-1 overflow-hidden"
                 style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
               >
-                <div className="flex items-center gap-2 pl-4 min-w-0">
+                <div className={cn('flex items-center gap-2 min-w-0', isSubtask ? 'pl-6' : 'pl-4')}>
                   <Plus size={12} className="text-ink-faded flex-shrink-0" />
                   <input
                     type="text"
                     value={newResourceName}
                     onChange={e => setNewResourceName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleAddResourceSubmit()}
-                    onBlur={handleAddResourceSubmit}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleAddResourceSubmit()
+                      if (e.key === 'Escape') setNewResourceName('')
+                    }}
                     placeholder={t('grid', 'newResource')}
                     className="input-notebook text-sm italic text-ink-faded min-w-0 flex-1"
                   />
+                  {newResourceName.trim() && (
+                    <InlineAddConfirm
+                      onSubmit={handleAddResourceSubmit}
+                      label={t('grid', 'pressEnterToAdd')}
+                    />
+                  )}
                 </div>
               </td>
               <td colSpan={3 + extraColCount}></td>
-              {timeSlots.map((slot, i) => {
-                const isCurrent = dateToSlotKey(slot, resolution) === currentSlotKey
-                return (
-                  <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')} />
-                )
-              })}
+              {slotKeys.map((slotKey, i) => (
+                <td
+                  key={i}
+                  className={cn('time-slot-cell p-0', slotKey === currentSlotKey && 'time-slot-current')}
+                />
+              ))}
             </tr>
           )}
         </>
@@ -1647,16 +2103,22 @@ function TaskRows({
   )
 }
 
+/**
+ * Rows are memoized because the store hands out a fresh tree on every paint
+ * stroke while leaving untouched task objects referentially stable.
+ */
+const TaskRows = memo(TaskRowsComponent)
+
 // ==================== Resource Row Component ====================
 
 interface ResourceRowProps {
   resource: ResourceWithAllocations
-  timeSlots: Date[]
-  resolution: 'day' | 'week' | 'month' | 'year'
-  onCellMouseDown: (resourceId: string, date: Date) => void
-  onCellMouseEnter: (resourceId: string, date: Date) => void
-  onUpdateResource: (updates: Partial<ResourceWithAllocations>) => void
-  onDeleteResource: () => void
+  slotKeys: string[]
+  currentSlotKey: string
+  onCellMouseDown: (resourceId: string, slotKey: string) => void
+  onCellMouseEnter: (resourceId: string, slotKey: string) => void
+  onUpdateResource: (id: string, updates: Partial<ResourceWithAllocations>) => void
+  onDeleteResource: (id: string) => void
   taskColumnLeft: number
   taskColumnWidth: number
   resourceColumnLeft: number
@@ -1666,12 +2128,14 @@ interface ResourceRowProps {
   showAddColumn: boolean
   getCustomValue: (columnId: string, rowType: CustomRowType, rowId: string) => string
   onOpenCustomCell: (target: CustomCellEditTarget) => void
+  /** Extra indent when resource belongs to a subtask */
+  indent?: boolean
 }
 
-function ResourceRow({
+function ResourceRowComponent({
   resource,
-  timeSlots,
-  resolution,
+  slotKeys,
+  currentSlotKey,
   onCellMouseDown,
   onCellMouseEnter,
   onUpdateResource,
@@ -1685,9 +2149,9 @@ function ResourceRow({
   showAddColumn,
   getCustomValue,
   onOpenCustomCell,
+  indent = false,
 }: ResourceRowProps) {
   const { t } = useTranslation()
-  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [isEditing, setIsEditing] = useState(false)
   const [name, setName] = useState(resource.name)
 
@@ -1709,15 +2173,38 @@ function ResourceRow({
 
   const handleSaveName = () => {
     if (name.trim() && name !== resource.name) {
-      onUpdateResource({ name: name.trim() })
+      onUpdateResource(resource.id, { name: name.trim() })
     } else {
       setName(resource.name)
     }
     setIsEditing(false)
   }
 
+  // Paint events are delegated from the row instead of bound per cell: a wide
+  // window would otherwise allocate two closures for every one of its cells.
+  const slotFromEvent = (e: React.MouseEvent) =>
+    (e.target as HTMLElement).closest<HTMLElement>('[data-slot]')?.dataset.slot
+
+  const handleRowMouseDown = canEdit
+    ? (e: React.MouseEvent) => {
+        const slotKey = slotFromEvent(e)
+        if (slotKey) onCellMouseDown(resource.id, slotKey)
+      }
+    : undefined
+
+  const handleRowMouseOver = canEdit
+    ? (e: React.MouseEvent) => {
+        const slotKey = slotFromEvent(e)
+        if (slotKey) onCellMouseEnter(resource.id, slotKey)
+      }
+    : undefined
+
   return (
-    <tr className="hover:bg-paper-warm/20 group">
+    <tr
+      className="hover:bg-paper-warm/20 group"
+      onMouseDown={handleRowMouseDown}
+      onMouseOver={handleRowMouseOver}
+    >
       {/* Empty ID cell */}
       <td 
         className="sticky bg-surface z-20 border-r border-paper-lines"
@@ -1735,7 +2222,7 @@ function ResourceRow({
         className="planvas-freeze-edge sticky bg-surface z-20 border-r border-paper-lines px-3 py-1.5 overflow-hidden"
         style={{ left: resourceColumnLeft, width: resourceColumnWidth }}
       >
-        <div className="flex items-center gap-2 pl-4 min-w-0">
+        <div className={cn('flex items-center gap-2 min-w-0', indent ? 'pl-6' : 'pl-4')}>
           {isEditing && canEdit ? (
             <input
               type="text"
@@ -1766,7 +2253,7 @@ function ResourceRow({
               onClick={(e) => {
                 e.stopPropagation()
                 if (confirm(`${t('grid', 'resource')} "${resource.name}" ${t('grid', 'deleteResourceConfirm')}`)) {
-                  onDeleteResource()
+                  onDeleteResource(resource.id)
                 }
               }}
               className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 transition-all flex-shrink-0"
@@ -1816,13 +2303,15 @@ function ResourceRow({
       {showAddColumn && <td className="border-l border-paper-lines" />}
       
       {/* Allocation Cells (paintable) */}
-      {timeSlots.map((slot, i) => {
-        const slotKey = dateToSlotKey(slot, resolution)
+      {slotKeys.map((slotKey, i) => {
         const allocation = resource.allocationMap.get(slotKey)
-        const isCurrent = slotKey === currentSlotKey
         
         return (
-          <td key={i} className={cn('time-slot-cell p-0', isCurrent && 'time-slot-current')}>
+          <td
+            key={i}
+            data-slot={slotKey}
+            className={cn('time-slot-cell p-0', slotKey === currentSlotKey && 'time-slot-current')}
+          >
             <div className="allocation-cell">
               <div
                 className={cn(
@@ -1834,8 +2323,6 @@ function ResourceRow({
                   '--chip-color': allocation.color_hex,
                   '--chip-opacity': percentageToOpacity(allocation.percentage),
                 } as React.CSSProperties : undefined}
-                onMouseDown={canEdit ? () => onCellMouseDown(resource.id, slot) : undefined}
-                onMouseEnter={canEdit ? () => onCellMouseEnter(resource.id, slot) : undefined}
                 title={allocation ? `${allocation.percentage}%` : (canEdit ? t('grid', 'clickToAssign') : '')}
               >
                 {allocation && (
@@ -1855,6 +2342,8 @@ function ResourceRow({
   )
 }
 
+const ResourceRow = memo(ResourceRowComponent)
+
 // ==================== Resource Summary Row Component ====================
 
 interface ResourceSummaryRowProps {
@@ -1865,21 +2354,21 @@ interface ResourceSummaryRowProps {
     startDate: string | null
     endDate: string | null
   }
-  timeSlots: Date[]
-  resolution: 'day' | 'week' | 'month' | 'year'
+  slotKeys: string[]
+  currentSlotKey: string
   customColumns: CustomColumn[]
   showAddColumn: boolean
   summaryColumnWidth: number
   minAllocation: number
   maxAllocation: number
-  onMinAllocationChange: (value: number) => void
-  onMaxAllocationChange: (value: number) => void
+  onMinAllocationChange: (name: string, value: number) => void
+  onMaxAllocationChange: (name: string, value: number) => void
 }
 
-function ResourceSummaryRow({
+function ResourceSummaryRowComponent({
   summary,
-  timeSlots,
-  resolution,
+  slotKeys,
+  currentSlotKey,
   customColumns,
   showAddColumn,
   summaryColumnWidth,
@@ -1889,50 +2378,37 @@ function ResourceSummaryRow({
   onMaxAllocationChange,
 }: ResourceSummaryRowProps) {
   const { t } = useTranslation()
-  const currentSlotKey = dateToSlotKey(new Date(), resolution)
   const [isEditingMin, setIsEditingMin] = useState(false)
   const [isEditingMax, setIsEditingMax] = useState(false)
   const [minInputValue, setMinInputValue] = useState(String(minAllocation))
   const [maxInputValue, setMaxInputValue] = useState(String(maxAllocation))
 
-  // Helper function to mix colors based on percentages
-  const mixColors = (colorData: { color: string; percentage: number }[]): string => {
-    if (colorData.length === 0) return '#E8E4DD'
-    if (colorData.length === 1) return colorData[0].color
-    
-    let totalWeight = 0
-    let r = 0, g = 0, b = 0
-    
-    for (const { color, percentage } of colorData) {
-      const hex = color.replace('#', '')
-      const cr = parseInt(hex.slice(0, 2), 16)
-      const cg = parseInt(hex.slice(2, 4), 16)
-      const cb = parseInt(hex.slice(4, 6), 16)
-      
-      r += cr * percentage
-      g += cg * percentage
-      b += cb * percentage
-      totalWeight += percentage
+  // Blended color per slot - only depends on the allocation data, so it must not
+  // be recomputed when the user merely edits a threshold.
+  const mixedColorBySlot = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [slotKey, data] of summary.allocationsBySlot) {
+      map.set(slotKey, mixAllocationColors(data.colorData))
     }
-    
-    if (totalWeight === 0) return '#E8E4DD'
-    
-    r = Math.round(r / totalWeight)
-    g = Math.round(g / totalWeight)
-    b = Math.round(b / totalWeight)
-    
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-  }
+    return map
+  }, [summary.allocationsBySlot])
 
   // Check if any slot exceeds maxAllocation or is below minAllocation (only if minAllocation > 0 and slot has a value)
-  const hasOverallocation = Array.from(summary.allocationsBySlot.values()).some(s => s.total > maxAllocation)
-  const hasUnderallocation = minAllocation > 0 && Array.from(summary.allocationsBySlot.values()).some(s => s.total > 0 && s.total < minAllocation)
-  const hasWarning = hasOverallocation || hasUnderallocation
+  const { hasOverallocation, hasUnderallocation } = useMemo(() => {
+    let over = false
+    let under = false
+    for (const slot of summary.allocationsBySlot.values()) {
+      if (slot.total > maxAllocation) over = true
+      if (minAllocation > 0 && slot.total > 0 && slot.total < minAllocation) under = true
+      if (over && under) break
+    }
+    return { hasOverallocation: over, hasUnderallocation: under }
+  }, [summary.allocationsBySlot, maxAllocation, minAllocation])
 
   const handleSaveMin = () => {
     const parsed = parseInt(minInputValue, 10)
     if (!isNaN(parsed) && parsed >= 0) {
-      onMinAllocationChange(parsed)
+      onMinAllocationChange(summary.name, parsed)
     } else {
       setMinInputValue(String(minAllocation))
     }
@@ -1942,7 +2418,7 @@ function ResourceSummaryRow({
   const handleSaveMax = () => {
     const parsed = parseInt(maxInputValue, 10)
     if (!isNaN(parsed) && parsed > 0) {
-      onMaxAllocationChange(parsed)
+      onMaxAllocationChange(summary.name, parsed)
     } else {
       setMaxInputValue(String(maxAllocation))
     }
@@ -2061,13 +2537,12 @@ function ResourceSummaryRow({
       {showAddColumn && <td className="border-l border-paper-lines" />}
       
       {/* Allocation Cells */}
-      {timeSlots.map((slot, i) => {
-        const slotKey = dateToSlotKey(slot, resolution)
+      {slotKeys.map((slotKey, i) => {
         const slotData = summary.allocationsBySlot.get(slotKey)
         const hasValue = slotData && slotData.total > 0
         const isOverallocated = slotData && slotData.total > maxAllocation
         const isUnderallocated = minAllocation > 0 && slotData && slotData.total > 0 && slotData.total < minAllocation
-        const mixedColor = slotData ? mixColors(slotData.colorData) : undefined
+        const mixedColor = mixedColorBySlot.get(slotKey)
         const isCurrent = slotKey === currentSlotKey
         
         return (
@@ -2102,3 +2577,5 @@ function ResourceSummaryRow({
     </tr>
   )
 }
+
+const ResourceSummaryRow = memo(ResourceSummaryRowComponent)
