@@ -291,6 +291,7 @@ export default function DashboardPage() {
             projectId={shareModalProject.id}
             projectName={shareModalProject.name}
             ownerId={shareModalProject.user_id}
+            isOwner={user?.id === shareModalProject.user_id}
           />
         )}
       </main>
@@ -332,16 +333,14 @@ function ProjectCard({ project, onDelete, isDeleting, isOwner, onShare, resoluti
       >
         {/* Action Buttons — secondary icon actions, reveal on hover */}
         <div className="absolute top-3 right-3 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {isOwner && (
-            <button
-              onClick={handleShare}
-              className="btn-icon bg-surface/90"
-              title={t('dashboard', 'shareProject')}
-              aria-label={t('dashboard', 'shareProject')}
-            >
-              <Share2 size={16} />
-            </button>
-          )}
+          <button
+            onClick={handleShare}
+            className="btn-icon bg-surface/90"
+            title={isOwner ? t('dashboard', 'shareProject') : t('share', 'exportTitle')}
+            aria-label={isOwner ? t('dashboard', 'shareProject') : t('share', 'exportTitle')}
+          >
+            <Share2 size={16} />
+          </button>
 
           {isOwner && (
             <button

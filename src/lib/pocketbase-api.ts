@@ -12,6 +12,7 @@ import type {
   CreateAllocationDTO,
   UpdateAllocationDTO,
   User,
+  UserPreferences,
   ProjectPermission,
   LoginCredentials,
   CreateUserDTO,
@@ -1042,6 +1043,29 @@ export async function refreshAuth(): Promise<User | null> {
     pb.authStore.clear()
     return null
   }
+}
+
+/** Preferences of the signed-in user as last seen by the auth store. */
+export function getCurrentUserPreferences(): UserPreferences {
+  const pb = getPocketBase()
+  const model = pb.authStore.model as unknown as User | null
+  const prefs = model?.preferences
+  return prefs && typeof prefs === 'object' ? prefs : {}
+}
+
+/**
+ * Merge `patch` into the signed-in user's preferences and persist them on the
+ * account. The SDK refreshes the auth store with the updated record.
+ */
+export async function updateUserPreferences(patch: Partial<UserPreferences>): Promise<UserPreferences> {
+  const pb = getPocketBase()
+  const model = pb.authStore.model as unknown as User | null
+  if (!pb.authStore.isValid || !model) {
+    throw new Error('Nicht authentifiziert')
+  }
+  const next: UserPreferences = { ...getCurrentUserPreferences(), ...patch }
+  const updated = await pb.collection('users').update<User>(model.id, { preferences: next })
+  return updated.preferences ?? next
 }
 
 // Register callback for auth state changes

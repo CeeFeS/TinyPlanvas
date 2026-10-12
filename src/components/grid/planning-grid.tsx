@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react'
-import { Plus, ChevronRight, ChevronLeft, GripVertical, ChevronsUpDown, ChevronsDownUp, Trash2, CornerDownLeft } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, LocateFixed, GripVertical, ChevronsUpDown, ChevronsDownUp, Trash2, CornerDownLeft } from 'lucide-react'
 import {
   useProjectStore,
   useProjectActions,
@@ -25,8 +25,11 @@ import {
   flattenTasksWithChildren,
   generateNextDisplayId,
   generateNextSubtaskDisplayId,
+  startOfSlot,
+  addSlots,
+  diffSlots,
 } from '@/lib/utils'
-import { format, parseISO, addYears, addMonths, startOfYear, startOfMonth, endOfYear, endOfMonth, isAfter, isBefore } from 'date-fns'
+import { format, parseISO, isAfter, isBefore } from 'date-fns'
 import type { TaskWithAggregation, ResourceWithAllocations, Resolution, CustomColumn, CustomRowType } from '@/lib/types'
 import {
   CustomColumnCell,
@@ -39,79 +42,73 @@ import { ColumnFilter } from './column-filter'
 
 // ==================== Time Window Configuration ====================
 
-// Maximum number of time units per view based on resolution
+// Slots per view. Odd counts give the current slot a true center column.
+// One navigation step moves by a full window, so stepping back always lands
+// on the centered window again.
 const TIME_WINDOW_CONFIG: Record<Resolution, { maxSlots: number; stepLabelKey: string }> = {
-  year: { maxSlots: 10, stepLabelKey: 'tenYears' },    // 10 years per view
-  month: { maxSlots: 12, stepLabelKey: 'oneYear' },     // 12 months (1 year) per view
-  week: { maxSlots: 17, stepLabelKey: 'fourMonths' },    // ~17 weeks (4 months) per view
-  day: { maxSlots: 31, stepLabelKey: 'oneMonth' },      // Max 31 days (1 month) per view
+  year: { maxSlots: 11, stepLabelKey: 'stepYears' },
+  month: { maxSlots: 13, stepLabelKey: 'stepMonths' },
+  week: { maxSlots: 17, stepLabelKey: 'stepWeeks' },
+  day: { maxSlots: 31, stepLabelKey: 'stepDays' },
 }
 
-// Calculate time window based on offset and resolution
-function calculateTimeWindow(
+interface TimeWindowLayout {
+  /** First slot of the window at offset 0 */
+  baseStart: Date
+  minOffset: number
+  maxOffset: number
+}
+
+/**
+ * Offset 0 centers the slot of `today`. If today lies outside the project, the
+ * window is anchored at the nearer project boundary instead.
+ */
+function calculateWindowLayout(
   projectStart: Date,
   projectEnd: Date,
   resolution: Resolution,
-  offset: number // Number of "steps" from project start
-): { windowStart: Date; windowEnd: Date } {
-  let windowStart: Date
-  let windowEnd: Date
+  today: Date
+): TimeWindowLayout {
+  const size = TIME_WINDOW_CONFIG[resolution].maxSlots
+  const firstSlot = startOfSlot(projectStart, resolution)
+  const lastSlot = startOfSlot(projectEnd, resolution)
+  const todaySlot = startOfSlot(today, resolution)
 
-  switch (resolution) {
-    case 'year':
-      // Step = 10 years
-      windowStart = addYears(startOfYear(projectStart), offset * 10)
-      windowEnd = addYears(windowStart, 9) // 10 years
-      windowEnd = endOfYear(windowEnd)
-      break
-    case 'month':
-      // Step = 1 year
-      windowStart = addYears(startOfYear(projectStart), offset)
-      windowEnd = endOfYear(windowStart)
-      break
-    case 'week':
-      // Step = 4 months
-      windowStart = addMonths(startOfMonth(projectStart), offset * 4)
-      windowEnd = endOfMonth(addMonths(windowStart, 3))
-      break
-    case 'day':
-      // Step = 1 month
-      windowStart = addMonths(startOfMonth(projectStart), offset)
-      windowEnd = endOfMonth(windowStart)
-      break
+  let baseStart: Date
+  if (isBefore(todaySlot, firstSlot)) {
+    baseStart = firstSlot
+  } else if (isAfter(todaySlot, lastSlot)) {
+    baseStart = addSlots(lastSlot, resolution, -(size - 1))
+  } else {
+    baseStart = addSlots(todaySlot, resolution, -Math.floor(size / 2))
   }
 
-  // Limit to project boundaries
-  if (isBefore(windowStart, projectStart)) {
-    windowStart = projectStart
-  }
-  if (isAfter(windowEnd, projectEnd)) {
-    windowEnd = projectEnd
-  }
+  const baseEnd = addSlots(baseStart, resolution, size - 1)
+  const slotsBefore = diffSlots(baseStart, firstSlot, resolution)
+  const slotsAfter = diffSlots(lastSlot, baseEnd, resolution)
 
-  return { windowStart, windowEnd }
+  return {
+    baseStart,
+    minOffset: slotsBefore > 0 ? -Math.ceil(slotsBefore / size) : 0,
+    maxOffset: slotsAfter > 0 ? Math.ceil(slotsAfter / size) : 0,
+  }
 }
 
-// Calculate maximum number of steps based on project duration
-function calculateMaxOffset(
+function calculateTimeWindow(
+  layout: TimeWindowLayout,
   projectStart: Date,
   projectEnd: Date,
-  resolution: Resolution
-): number {
-  const yearsDiff = projectEnd.getFullYear() - projectStart.getFullYear()
-  const monthsDiff = (projectEnd.getFullYear() - projectStart.getFullYear()) * 12 + 
-                     (projectEnd.getMonth() - projectStart.getMonth())
+  resolution: Resolution,
+  offset: number
+): { windowStart: Date; windowEnd: Date } {
+  const size = TIME_WINDOW_CONFIG[resolution].maxSlots
+  let windowStart = addSlots(layout.baseStart, resolution, offset * size)
+  let windowEnd = addSlots(windowStart, resolution, size - 1)
 
-  switch (resolution) {
-    case 'year':
-      return Math.max(0, Math.ceil(yearsDiff / 10))
-    case 'month':
-      return Math.max(0, yearsDiff)
-    case 'week':
-      return Math.max(0, Math.ceil(monthsDiff / 4))
-    case 'day':
-      return Math.max(0, monthsDiff)
-  }
+  if (isBefore(windowStart, projectStart)) windowStart = projectStart
+  if (isAfter(windowEnd, projectEnd)) windowEnd = projectEnd
+
+  return { windowStart, windowEnd }
 }
 
 // ==================== Column Resizer Component ====================
@@ -388,22 +385,31 @@ export function PlanningGrid() {
   const taskColumnLeft = ID_COLUMN_WIDTH
   const resourceColumnLeft = ID_COLUMN_WIDTH + taskColumnWidth
 
-  // Calculate time window boundaries
-  const { windowStart, windowEnd, maxOffset } = useMemo(() => {
-    if (!project) return { windowStart: new Date(), windowEnd: new Date(), maxOffset: 0 }
-    
-    const projectStart = parseISO(project.start_date)
-    const projectEnd = parseISO(project.end_date)
-    const max = calculateMaxOffset(projectStart, projectEnd, project.resolution)
+  // Calculate time window boundaries (offset 0 = window centered on today)
+  const projectStartDate = project?.start_date
+  const projectEndDate = project?.end_date
+  const projectResolution = project?.resolution
+  const { windowStart, windowEnd, minOffset, maxOffset, offset } = useMemo(() => {
+    if (!projectStartDate || !projectEndDate || !projectResolution) {
+      const now = new Date()
+      return { windowStart: now, windowEnd: now, minOffset: 0, maxOffset: 0, offset: 0 }
+    }
+
+    const projectStart = parseISO(projectStartDate)
+    const projectEnd = parseISO(projectEndDate)
+    const layout = calculateWindowLayout(projectStart, projectEnd, projectResolution, new Date())
+    // Project dates may change while browsing - keep the offset inside the range
+    const offset = Math.min(layout.maxOffset, Math.max(layout.minOffset, timeWindowOffset))
     const { windowStart, windowEnd } = calculateTimeWindow(
-      projectStart, 
-      projectEnd, 
-      project.resolution, 
-      timeWindowOffset
+      layout,
+      projectStart,
+      projectEnd,
+      projectResolution,
+      offset
     )
-    
-    return { windowStart, windowEnd, maxOffset: max }
-  }, [project, timeWindowOffset])
+
+    return { windowStart, windowEnd, minOffset: layout.minOffset, maxOffset: layout.maxOffset, offset }
+  }, [projectStartDate, projectEndDate, projectResolution, timeWindowOffset])
 
   // Generate time slots for current window
   const timeSlots = useMemo(() => {
@@ -423,25 +429,30 @@ export function PlanningGrid() {
   )
 
   // Navigation handlers
-  const canGoBack = timeWindowOffset > 0
-  const canGoForward = timeWindowOffset < maxOffset
+  const canGoBack = offset > minOffset
+  const canGoForward = offset < maxOffset
+  const isAtToday = offset === 0
 
   const handlePrevWindow = useCallback(() => {
     if (canGoBack) {
-      setTimeWindowOffset(prev => prev - 1)
+      setTimeWindowOffset(offset - 1)
     }
-  }, [canGoBack])
+  }, [canGoBack, offset])
 
   const handleNextWindow = useCallback(() => {
     if (canGoForward) {
-      setTimeWindowOffset(prev => prev + 1)
+      setTimeWindowOffset(offset + 1)
     }
-  }, [canGoForward])
+  }, [canGoForward, offset])
 
-  // Reset offset when resolution changes
+  const handleJumpToToday = useCallback(() => {
+    setTimeWindowOffset(0)
+  }, [])
+
+  // Back to the centered window whenever another project or resolution is shown
   useEffect(() => {
     setTimeWindowOffset(0)
-  }, [project?.resolution])
+  }, [projectId, projectResolution])
 
   // Group slots by month/year for header
   const slotGroups = useMemo(() => {
@@ -558,6 +569,27 @@ export function PlanningGrid() {
     () => (project ? dateToSlotKey(new Date(), project.resolution) : ''),
     [project]
   )
+
+  // When the slots overflow horizontally, scroll so today's column sits in the
+  // middle of the area right of the frozen columns.
+  const frozenColumnsWidthRef = useRef(0)
+  frozenColumnsWidthRef.current = ID_COLUMN_WIDTH + taskColumnWidth + resourceColumnWidth
+  const windowStartTime = windowStart.getTime()
+  useEffect(() => {
+    if (!isAtToday) return
+    const frame = requestAnimationFrame(() => {
+      const container = scrollRef.current
+      const cell = gridRef.current?.querySelector<HTMLElement>('th.time-slot-current')
+      if (!container || !cell || container.scrollWidth <= container.clientWidth) return
+      const frozen = frozenColumnsWidthRef.current
+      const containerRect = container.getBoundingClientRect()
+      const cellRect = cell.getBoundingClientRect()
+      const cellCenter = cellRect.left - containerRect.left + container.scrollLeft + cellRect.width / 2
+      const visibleCenter = frozen + (container.clientWidth - frozen) / 2
+      container.scrollLeft = Math.max(0, cellCenter - visibleCenter)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isAtToday, currentSlotKey, windowStartTime])
 
   // Distinct values per filterable (standard) column - populate the dropdowns.
   const filterValues = useMemo(() => {
@@ -1089,6 +1121,16 @@ export function PlanningGrid() {
                         <ChevronLeft size={14} />
                       </button>
                     )}
+                    {groupIndex === 0 && !isAtToday && (
+                      <button
+                        onClick={handleJumpToToday}
+                        className="p-0.5 rounded transition-colors flex-shrink-0 text-ink-blue hover:bg-paper-warm"
+                        title={t('grid', 'jumpToToday')}
+                        aria-label={t('grid', 'jumpToToday')}
+                      >
+                        <LocateFixed size={14} />
+                      </button>
+                    )}
                     
                     <span className="font-hand text-xs text-ink-light flex-1 min-w-0 truncate">
                       {group.label}
@@ -1334,6 +1376,16 @@ export function PlanningGrid() {
                             <ChevronLeft size={14} />
                           </button>
                         )}
+                        {groupIndex === 0 && !isAtToday && (
+                          <button
+                            onClick={handleJumpToToday}
+                            className="p-0.5 rounded transition-colors flex-shrink-0 text-ink-blue hover:bg-paper-warm"
+                            title={t('grid', 'jumpToToday')}
+                            aria-label={t('grid', 'jumpToToday')}
+                          >
+                            <LocateFixed size={14} />
+                          </button>
+                        )}
                         
                         <span className="font-hand text-xs text-ink-light flex-1 min-w-0 truncate">
                           {group.label}
@@ -1416,6 +1468,7 @@ export function PlanningGrid() {
 
       {editingCustomCell && (
         <CustomValueEditor
+          key={`${editingCustomCell.column.id}:${editingCustomCell.rowType}:${editingCustomCell.rowId}`}
           columnName={editingCustomCell.column.name}
           initialValue={editingCustomCell.value}
           canEdit={editingCustomCell.canEdit}

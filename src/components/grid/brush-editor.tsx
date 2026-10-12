@@ -4,84 +4,10 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Paintbrush, ChevronDown, Check, Plus, X, Save } from 'lucide-react'
 import { useProjectStore } from '@/store/project-store'
 import { useTranslation } from '@/lib/language-context'
-import { DEFAULT_PERCENTAGES, DEFAULT_BASE_COLOR, MAX_PERCENTAGE_PRESETS, COLOR_PALETTE } from '@/lib/types'
+import { MAX_PERCENTAGE_PRESETS, MAX_CUSTOM_COLORS, COLOR_PALETTE } from '@/lib/types'
+import { useBrushPreferences, normalizeHexColor } from '@/lib/use-brush-preferences'
 import { cn, percentageToOpacity, getContrastTextColor } from '@/lib/utils'
 import type { CSSProperties } from 'react'
-
-const STORAGE_KEY_PERCENTAGES = 'tinyplanvas-brush-percentages'
-const LEGACY_STORAGE_KEY_PERCENTAGES = 'tinyplanvas-custom-percentages'
-const STORAGE_KEY_BASE_COLOR = 'tinyplanvas-base-color'
-
-function normalizePercentages(values: unknown): number[] | null {
-  if (!Array.isArray(values)) return null
-  const nums = values
-    .map(v => (typeof v === 'number' ? v : parseFloat(String(v))))
-    .filter(n => !isNaN(n) && n >= 0 && n <= 100)
-  const unique = [...new Set(nums)].sort((a, b) => a - b)
-  if (unique.length === 0) return null
-  return unique.slice(0, MAX_PERCENTAGE_PRESETS)
-}
-
-function loadPercentages(): number[] {
-  if (typeof window === 'undefined') return [...DEFAULT_PERCENTAGES]
-
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY_PERCENTAGES)
-    if (stored) {
-      const parsed = normalizePercentages(JSON.parse(stored))
-      if (parsed) return parsed
-    }
-  } catch (e) {
-    console.error('Failed to load brush percentages:', e)
-  }
-
-  // Migrate legacy custom-only list → full preset list
-  try {
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY_PERCENTAGES)
-    if (legacy) {
-      const customs = normalizePercentages(JSON.parse(legacy)) ?? []
-      const merged = normalizePercentages([...DEFAULT_PERCENTAGES, ...customs])
-      if (merged) {
-        savePercentages(merged)
-        localStorage.removeItem(LEGACY_STORAGE_KEY_PERCENTAGES)
-        return merged
-      }
-    }
-  } catch (e) {
-    console.error('Failed to migrate brush percentages:', e)
-  }
-
-  return [...DEFAULT_PERCENTAGES]
-}
-
-function savePercentages(percentages: number[]) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(STORAGE_KEY_PERCENTAGES, JSON.stringify(percentages))
-  } catch (e) {
-    console.error('Failed to save brush percentages:', e)
-  }
-}
-
-function loadBaseColor(): string {
-  if (typeof window === 'undefined') return DEFAULT_BASE_COLOR
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY_BASE_COLOR)
-    if (stored) return stored
-  } catch (e) {
-    console.error('Failed to load base color:', e)
-  }
-  return DEFAULT_BASE_COLOR
-}
-
-function saveBaseColor(color: string) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(STORAGE_KEY_BASE_COLOR, color)
-  } catch (e) {
-    console.error('Failed to save base color:', e)
-  }
-}
 
 function isEditableTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
@@ -106,8 +32,16 @@ export function BrushEditor() {
   const { activeBrush, setActiveBrush } = useProjectStore()
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
-  const [percentages, setPercentages] = useState<number[]>([...DEFAULT_PERCENTAGES])
-  const [baseColor, setBaseColor] = useState(DEFAULT_BASE_COLOR)
+  const {
+    percentages,
+    setPercentages: updatePercentages,
+    baseColor,
+    setBaseColor,
+    customColors,
+    setCustomColors,
+  } = useBrushPreferences()
+  const [showColorForm, setShowColorForm] = useState(false)
+  const [newColorInput, setNewColorInput] = useState('#E6B000')
   const [showAddForm, setShowAddForm] = useState(false)
   const [newPercentageInput, setNewPercentageInput] = useState('')
   const [isEditingPercentage, setIsEditingPercentage] = useState(false)
@@ -116,21 +50,15 @@ export function BrushEditor() {
   const percentageInputRef = useRef<HTMLInputElement>(null)
   const skipBlurCommitRef = useRef(false)
 
+  // Base color may arrive later from the account - keep the active brush in sync
   useEffect(() => {
-    setPercentages(loadPercentages())
-    const savedColor = loadBaseColor()
-    setBaseColor(savedColor)
-    setActiveBrush({ ...activeBrush, colorHex: savedColor })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    const brush = useProjectStore.getState().activeBrush
+    if (brush.colorHex !== baseColor) {
+      setActiveBrush({ ...brush, colorHex: baseColor })
+    }
+  }, [baseColor, setActiveBrush])
 
   const isOrphanValue = !percentages.includes(activeBrush.percentage)
-
-  const updatePercentages = useCallback((next: number[]) => {
-    const normalized = normalizePercentages(next) ?? [...DEFAULT_PERCENTAGES]
-    setPercentages(normalized)
-    savePercentages(normalized)
-    return normalized
-  }, [])
 
   const applyPercentage = useCallback((percentage: number) => {
     setActiveBrush({ percentage, colorHex: baseColor })
@@ -214,9 +142,30 @@ export function BrushEditor() {
 
   const handleBaseColorChange = (color: string) => {
     setBaseColor(color)
-    saveBaseColor(color)
-    setActiveBrush({ percentage: activeBrush.percentage, colorHex: color })
   }
+
+  const normalizedNewColor = normalizeHexColor(newColorInput)
+  const canAddColor = customColors.length < MAX_CUSTOM_COLORS
+
+  const handleAddColor = () => {
+    if (!normalizedNewColor || !canAddColor) return
+    const isKnown =
+      (COLOR_PALETTE as readonly string[]).includes(normalizedNewColor) ||
+      customColors.includes(normalizedNewColor)
+    if (!isKnown) {
+      setCustomColors([...customColors, normalizedNewColor])
+    }
+    setBaseColor(normalizedNewColor)
+    setShowColorForm(false)
+  }
+
+  const handleRemoveColor = (color: string) => {
+    setCustomColors(customColors.filter(c => c !== color))
+  }
+
+  // A previously chosen color that is no longer offered (e.g. old palette) stays usable
+  const isLegacyBaseColor =
+    !(COLOR_PALETTE as readonly string[]).includes(baseColor) && !customColors.includes(baseColor)
 
   const handleAddPercentage = (value?: number) => {
     const num = value ?? parseFloat(newPercentageInput)
@@ -407,25 +356,106 @@ export function BrushEditor() {
               <label className="block text-xs text-ink-faded uppercase tracking-wide mb-2">
                 {t('brush', 'baseColor')}
               </label>
-              <div className="grid grid-cols-8 gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {COLOR_PALETTE.map((color) => (
-                  <button
+                  <ColorSwatch
                     key={color}
-                    type="button"
-                    onClick={() => handleBaseColorChange(color)}
-                    className={cn(
-                      'w-6 h-6 rounded transition-transform hover:scale-110',
-                      'flex items-center justify-center',
-                      baseColor === color && 'ring-2 ring-ink ring-offset-1'
-                    )}
-                    style={{ backgroundColor: color }}
-                  >
-                    {baseColor === color && (
-                      <Check size={12} className="text-white drop-shadow-sm" />
-                    )}
-                  </button>
+                    color={color}
+                    isActive={baseColor === color}
+                    onSelect={() => handleBaseColorChange(color)}
+                  />
                 ))}
+                {isLegacyBaseColor && (
+                  <ColorSwatch color={baseColor} isActive onSelect={() => handleBaseColorChange(baseColor)} />
+                )}
               </div>
+
+              <div className="flex items-center justify-between mt-3 mb-2">
+                <label className="text-xs text-ink-faded uppercase tracking-wide">
+                  {t('brush', 'customColors')}
+                </label>
+                <span className="text-[11px] font-mono text-ink-faded">
+                  {t('brush', 'presetsCount')
+                    .replace('{count}', String(customColors.length))
+                    .replace('{max}', String(MAX_CUSTOM_COLORS))}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {customColors.map((color) => (
+                  <div key={color} className="relative group/swatch">
+                    <ColorSwatch
+                      color={color}
+                      isActive={baseColor === color}
+                      onSelect={() => handleBaseColorChange(color)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveColor(color)}
+                      className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-surface border border-paper-lines text-ink-faded hover:text-red-600 hidden group-hover/swatch:flex items-center justify-center"
+                      title={t('brush', 'removeColor')}
+                      aria-label={t('brush', 'removeColor')}
+                    >
+                      <X size={8} />
+                    </button>
+                  </div>
+                ))}
+                {canAddColor && !showColorForm && (
+                  <button
+                    type="button"
+                    onClick={() => setShowColorForm(true)}
+                    className="w-6 h-6 rounded border border-dashed border-paper-lines text-ink-faded hover:text-ink hover:border-ink-faded flex items-center justify-center transition-colors"
+                    title={t('brush', 'addColor')}
+                    aria-label={t('brush', 'addColor')}
+                  >
+                    <Plus size={12} />
+                  </button>
+                )}
+              </div>
+
+              {showColorForm && (
+                <div className="mt-2 p-2.5 bg-paper-warm rounded flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={normalizedNewColor ?? '#000000'}
+                    onChange={e => setNewColorInput(e.target.value.toUpperCase())}
+                    className="w-8 h-8 p-0 border border-paper-lines rounded cursor-pointer bg-transparent flex-shrink-0"
+                    aria-label={t('brush', 'pickColor')}
+                  />
+                  <input
+                    type="text"
+                    value={newColorInput}
+                    onChange={e => setNewColorInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleAddColor()
+                      if (e.key === 'Escape') setShowColorForm(false)
+                    }}
+                    className="input-notebook flex-1 min-w-0 font-mono text-xs uppercase"
+                    placeholder="#RRGGBB"
+                    maxLength={7}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowColorForm(false)}
+                    className="p-1 text-ink-light hover:text-ink"
+                  >
+                    <X size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddColor}
+                    disabled={!normalizedNewColor}
+                    className={cn(
+                      'p-1.5 rounded text-xs',
+                      'bg-ink-blue text-white hover:bg-ink-blue/90',
+                      'disabled:opacity-50 disabled:cursor-not-allowed'
+                    )}
+                    title={t('brush', 'addColor')}
+                  >
+                    <Save size={12} />
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="mb-3">
@@ -551,10 +581,40 @@ export function BrushEditor() {
 
             <p className="pt-3 border-t border-paper-lines text-[11px] text-ink-faded leading-relaxed">
               {t('brush', 'keyboardHints')}
+              <br />
+              {t('brush', 'syncedHint')}
             </p>
           </div>
         </>
       )}
     </div>
+  )
+}
+
+interface ColorSwatchProps {
+  color: string
+  isActive: boolean
+  onSelect: () => void
+}
+
+function ColorSwatch({ color, isActive, onSelect }: ColorSwatchProps) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'w-6 h-6 rounded transition-transform hover:scale-110',
+        'flex items-center justify-center',
+        isActive && 'ring-2 ring-ink ring-offset-1'
+      )}
+      style={{ backgroundColor: color }}
+      title={color}
+      aria-label={color}
+      aria-pressed={isActive}
+    >
+      {isActive && (
+        <Check size={12} className="drop-shadow-sm" style={{ color: getContrastTextColor(color) }} />
+      )}
+    </button>
   )
 }

@@ -132,6 +132,14 @@ export interface User extends BaseRecord {
   avatar?: string
   isAdmin: boolean
   verified: boolean
+  preferences?: UserPreferences | null
+}
+
+/** Per-account settings, stored as JSON on the users record */
+export interface UserPreferences {
+  brushPercentages?: number[]
+  brushBaseColor?: string
+  customColors?: string[]
 }
 
 export type PermissionLevel = 'view' | 'edit'
@@ -186,11 +194,14 @@ export interface BrushConfig {
   colorHex: string // Grundfarbe - Opacity wird aus percentage berechnet
 }
 
-// Startwerte für den Pinsel (alle löschbar; werden in localStorage persistiert)
+// Startwerte für den Pinsel (alle löschbar; werden am Account persistiert)
 export const DEFAULT_PERCENTAGES = [25, 50, 75, 100] as const
 
 // Standard-Grundfarbe
-export const DEFAULT_BASE_COLOR = '#30A14E'
+export const DEFAULT_BASE_COLOR = '#216E39'
+
+// Max. selbst definierte Farben pro Account
+export const MAX_CUSTOM_COLORS = 12
 
 // Max. Presets = Nummern-Hotkeys 1–9 und 0
 export const MAX_PERCENTAGE_PRESETS = 10
@@ -198,16 +209,13 @@ export const MAX_PERCENTAGE_PRESETS = 10
 /** @deprecated Use MAX_PERCENTAGE_PRESETS */
 export const MAX_CUSTOM_PRESETS = MAX_PERCENTAGE_PRESETS
 
-// Color Palette für Custom Colors
+// Grundfarben - kräftige Töne, die Intensität kommt aus dem Prozentwert
 export const COLOR_PALETTE = [
-  // Greens (default)
-  '#9BE9A8', '#40C463', '#30A14E', '#216E39',
-  // Blues
-  '#9ECAE1', '#6BAED6', '#3182BD', '#08519C',
-  // Oranges
-  '#FDAE6B', '#FD8D3C', '#E6550D', '#A63603',
-  // Purples
-  '#BCBDDC', '#9E9AC8', '#756BB1', '#54278F',
+  '#216E39', // Green
+  '#08519C', // Blue
+  '#A63603', // Brown / Orange
+  '#54278F', // Purple
+  '#E6B000', // Yellow
 ] as const
 
 // Presence Colors für Nutzer-Avatare

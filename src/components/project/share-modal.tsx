@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   X, Share2, Users, Loader2, Trash2, Eye, Edit3, Search,
-  Link2, Copy, Check, RefreshCw, Globe,
+  Link2, Copy, Check, RefreshCw, Globe, Download, FileSpreadsheet,
 } from 'lucide-react'
 import { useTranslation } from '@/lib/language-context'
 import * as api from '@/lib/pocketbase-api'
+import { buildProjectCsv, csvFileName, downloadCsv } from '@/lib/csv-export'
 import type { User, ProjectPermission, PermissionLevel, Project } from '@/lib/types'
 
 interface ShareProjectModalProps {
@@ -15,6 +16,8 @@ interface ShareProjectModalProps {
   projectId: string
   projectName: string
   ownerId: string
+  /** Non-owners only get the export tab */
+  isOwner: boolean
   /** Called when share_enabled / share_token change so parents can refresh */
   onProjectShareChange?: (project: Project) => void
 }
@@ -24,7 +27,7 @@ interface UserWithPermission {
   permission: ProjectPermission | null
 }
 
-type ShareTab = 'users' | 'link'
+type ShareTab = 'users' | 'link' | 'export'
 
 export function ShareProjectModal({
   isOpen,
@@ -32,10 +35,11 @@ export function ShareProjectModal({
   projectId,
   projectName,
   ownerId,
+  isOwner,
   onProjectShareChange,
 }: ShareProjectModalProps) {
-  const { t } = useTranslation()
-  const [tab, setTab] = useState<ShareTab>('users')
+  const { t, language } = useTranslation()
+  const [tab, setTab] = useState<ShareTab>(isOwner ? 'users' : 'export')
   const [users, setUsers] = useState<User[]>([])
   const [permissions, setPermissions] = useState<ProjectPermission[]>([])
   const [project, setProject] = useState<Project | null>(null)
@@ -45,9 +49,14 @@ export function ShareProjectModal({
   const [searchQuery, setSearchQuery] = useState('')
   const [linkBusy, setLinkBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
+    if (!isOwner) {
+      setIsLoading(false)
+      return
+    }
 
     const loadData = async () => {
       try {
@@ -72,7 +81,7 @@ export function ShareProjectModal({
     }
 
     loadData()
-  }, [isOpen, projectId, t])
+  }, [isOpen, isOwner, projectId, t])
 
   const shareUrl = useMemo(() => {
     if (!project?.share_enabled || !project.share_token) return ''
@@ -184,6 +193,36 @@ export function ShareProjectModal({
     }
   }
 
+  const handleExportCsv = async () => {
+    try {
+      setExportBusy(true)
+      setError(null)
+      const data = await api.fetchProjectFullData(projectId)
+      const csv = buildProjectCsv(data, {
+        labels: {
+          taskId: t('share', 'csvTaskId'),
+          task: t('share', 'csvTask'),
+          parentTaskId: t('share', 'csvParentTaskId'),
+          resource: t('share', 'csvResource'),
+          slot: t('share', 'csvSlot'),
+          date: t('share', 'csvDate'),
+          percentage: t('share', 'csvPercentage'),
+          color: t('share', 'csvColor'),
+          taskSuffix: t('share', 'csvTaskSuffix'),
+          resourceSuffix: t('share', 'csvResourceSuffix'),
+          weekPrefix: language === 'en' ? 'W' : 'KW',
+        },
+        decimalSeparator: language === 'de' ? ',' : '.',
+      })
+      downloadCsv(csvFileName(data.project.name), csv)
+    } catch (err) {
+      console.error('Error exporting CSV:', err)
+      setError(err instanceof Error ? err.message : t('share', 'exportError'))
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
   const sharedCount = permissions.length
 
   return (
@@ -198,7 +237,9 @@ export function ShareProjectModal({
           <div className="flex items-center gap-3 min-w-0">
             <Share2 size={18} className="text-ink-light flex-shrink-0" />
             <div className="min-w-0">
-              <h2 className="font-hand text-xl text-ink leading-tight">{t('share', 'title')}</h2>
+              <h2 className="font-hand text-xl text-ink leading-tight">
+                {isOwner ? t('share', 'title') : t('share', 'exportTitle')}
+              </h2>
               <p className="text-xs text-ink-faded truncate">{projectName}</p>
             </div>
           </div>
@@ -213,29 +254,45 @@ export function ShareProjectModal({
 
         {/* Tabs */}
         <div className="flex border-b border-paper-lines px-6 gap-1">
+          {isOwner && (
+            <>
+              <button
+                onClick={() => setTab('users')}
+                className={`
+                  flex items-center gap-1.5 px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors
+                  ${tab === 'users'
+                    ? 'border-ink-blue text-ink font-medium'
+                    : 'border-transparent text-ink-faded hover:text-ink'}
+                `}
+              >
+                <Users size={14} />
+                {t('share', 'tabUsers')}
+              </button>
+              <button
+                onClick={() => setTab('link')}
+                className={`
+                  flex items-center gap-1.5 px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors
+                  ${tab === 'link'
+                    ? 'border-ink-blue text-ink font-medium'
+                    : 'border-transparent text-ink-faded hover:text-ink'}
+                `}
+              >
+                <Globe size={14} />
+                {t('share', 'tabLink')}
+              </button>
+            </>
+          )}
           <button
-            onClick={() => setTab('users')}
+            onClick={() => setTab('export')}
             className={`
               flex items-center gap-1.5 px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors
-              ${tab === 'users'
+              ${tab === 'export'
                 ? 'border-ink-blue text-ink font-medium'
                 : 'border-transparent text-ink-faded hover:text-ink'}
             `}
           >
-            <Users size={14} />
-            {t('share', 'tabUsers')}
-          </button>
-          <button
-            onClick={() => setTab('link')}
-            className={`
-              flex items-center gap-1.5 px-3 py-2.5 text-sm border-b-2 -mb-px transition-colors
-              ${tab === 'link'
-                ? 'border-ink-blue text-ink font-medium'
-                : 'border-transparent text-ink-faded hover:text-ink'}
-            `}
-          >
-            <Globe size={14} />
-            {t('share', 'tabLink')}
+            <Download size={14} />
+            {t('share', 'tabExport')}
           </button>
         </div>
 
@@ -247,7 +304,33 @@ export function ShareProjectModal({
             </div>
           )}
 
-          {isLoading ? (
+          {tab === 'export' ? (
+            <div className="space-y-4">
+              <p className="text-sm text-ink-light">
+                {t('share', 'exportDescription')}
+              </p>
+
+              <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-paper-lines bg-paper-warm/30">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-ink flex items-center gap-1.5">
+                    <FileSpreadsheet size={14} className="text-ink-blue flex-shrink-0" />
+                    {t('share', 'exportCsv')}
+                  </div>
+                  <p className="text-xs text-ink-faded mt-0.5">
+                    {t('share', 'exportCsvHint')}
+                  </p>
+                </div>
+                <button
+                  onClick={handleExportCsv}
+                  disabled={exportBusy}
+                  className="btn-notebook btn-notebook-primary text-sm flex-shrink-0 disabled:opacity-50"
+                >
+                  {exportBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  {t('share', 'download')}
+                </button>
+              </div>
+            </div>
+          ) : isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-6 h-6 animate-spin text-ink-faded" />
             </div>

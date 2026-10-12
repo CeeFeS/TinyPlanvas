@@ -7,6 +7,18 @@ import {
   eachWeekOfInterval, 
   eachMonthOfInterval,
   eachYearOfInterval,
+  startOfDay,
+  startOfWeek,
+  startOfMonth,
+  startOfYear,
+  addDays,
+  addWeeks,
+  addMonths,
+  addYears,
+  differenceInCalendarDays,
+  differenceInCalendarWeeks,
+  differenceInCalendarMonths,
+  differenceInCalendarYears,
   Locale,
 } from 'date-fns'
 import { de } from 'date-fns/locale'
@@ -39,6 +51,48 @@ export function generateTimeSlots(
       return eachMonthOfInterval({ start, end })
     case 'year':
       return eachYearOfInterval({ start, end })
+  }
+}
+
+/** Beginn des Zeitslots, in dem `date` liegt (Wochen beginnen montags). */
+export function startOfSlot(date: Date, resolution: Resolution): Date {
+  switch (resolution) {
+    case 'day':
+      return startOfDay(date)
+    case 'week':
+      return startOfWeek(date, { weekStartsOn: 1 })
+    case 'month':
+      return startOfMonth(date)
+    case 'year':
+      return startOfYear(date)
+  }
+}
+
+/** Verschiebt ein Datum um `amount` Zeitslots. */
+export function addSlots(date: Date, resolution: Resolution, amount: number): Date {
+  switch (resolution) {
+    case 'day':
+      return addDays(date, amount)
+    case 'week':
+      return addWeeks(date, amount)
+    case 'month':
+      return addMonths(date, amount)
+    case 'year':
+      return addYears(date, amount)
+  }
+}
+
+/** Anzahl Zeitslots von `earlier` bis `later` (negativ, wenn `later` davor liegt). */
+export function diffSlots(later: Date, earlier: Date, resolution: Resolution): number {
+  switch (resolution) {
+    case 'day':
+      return differenceInCalendarDays(later, earlier)
+    case 'week':
+      return differenceInCalendarWeeks(later, earlier, { weekStartsOn: 1 })
+    case 'month':
+      return differenceInCalendarMonths(later, earlier)
+    case 'year':
+      return differenceInCalendarYears(later, earlier)
   }
 }
 

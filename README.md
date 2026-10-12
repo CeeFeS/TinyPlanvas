@@ -8,6 +8,7 @@
 [![Backend: PocketBase](https://img.shields.io/badge/Backend-PocketBase-blue?style=flat-square)](https://pocketbase.io/)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+![Version](https://img.shields.io/badge/Version-0.8.0-green?style=flat-square)
 
 <br />
 
@@ -90,6 +91,8 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 - **Status Tracking** — Green for confirmed, yellow for tentative, red for at-risk
 - **Team Differentiation** — Each team member gets their own color
 
+Five strong base colors (green, blue, brown/orange, purple, yellow) are built in — define any additional color with the color picker. Your custom colors, base color and percentage presets are saved to your account and follow you across devices.
+
 ### 🎯 Perfect for:
 
 - **Project Managers** — Plan team capacity across multiple projects
@@ -104,15 +107,18 @@ One of TinyPlanvas' unique features is the ability to work with **multiple color
 |---------|-------------|
 | 🖌️ **Paint-to-Plan** | Click and drag to paint allocations — as intuitive as using a brush |
 | 📊 **Multi-Resolution** | View by Day, Week, Month, or Year — zoom in or out as needed |
+| 📍 **Today-Centered Timeline** | The current day, week, month or year is always centered — page back and forth and land centered again |
 | 🎨 **Color-Coded Workload** | Visual heatmap with exact percentages shown right on each cell |
 | 🚦 **Project Priorities** | Flag projects as Immediate, High, Medium, Low or On Hold with color coding |
-| 📝 **Custom Columns** | Add free-text, Markdown-rendered columns to any task or resource — resizable widths |
+| 📝 **Custom Columns** | Add free-text, Markdown-rendered columns to any task or resource — opens rendered first, switch to edit when needed |
+| 🎨 **Custom Colors** | Color picker for your own brush colors — colors & percentage presets are stored on your account |
 | 🔍 **Column Filters** | Filter the grid by task or resource with quick per-column dropdowns |
 | 📌 **Sticky Headers** | Opaque, flicker-free sticky headers & frozen columns keep context while scrolling |
 | 🌙 **Dark Mode** | Light, dark, or follow-system theme with full-width, no-margin layout |
 | 👥 **Real-time Collaboration** | See changes from teammates live with PocketBase subscriptions |
 | 🔐 **User & Permission System** | Share projects with view or edit access |
 | 🔗 **Public Share Links** | View-only links (`/share/[token]`) — no account required |
+| 📤 **CSV Export** | Export all project data from the share menu — one row per allocation, Excel-ready |
 | 📱 **Responsive Design** | Works beautifully on desktop and tablet |
 | 🌍 **Multi-Language** | Built-in i18n support (German & English) |
 | 🐳 **One-Command Deploy** | Docker Compose setup for instant production deployment |
@@ -280,10 +286,10 @@ We have exciting features planned for TinyPlanvas! Here's what's coming:
 | ✅ | **UI Improvements** | Full-width flat layout, larger color-coded cells, project priorities, custom columns, column filters & robust sticky headers |
 | ✅ | **Dark Mode** | Easy on the eyes for late-night planning sessions 🌙 |
 | ✅ | **Public Share Links** | View-only project links for stakeholders without an account |
+| ✅ | **Export: CSV** | Simple data export for analysis and backups |
 | 🔲 | **REST API** | Public API endpoints for integrations and automation |
 | 🔲 | **Export: PDF** | Generate beautiful PDF reports of your project plans |
 | 🔲 | **Export: XLSX** | Excel-compatible exports for stakeholder reporting |
-| 🔲 | **Export: CSV** | Simple data export for analysis and backups |
 
 ### Future Ideas
 

@@ -127,9 +127,13 @@ export function CustomValueEditor({
 }: CustomValueEditorProps) {
   const { t } = useTranslation()
   const [text, setText] = useState(initialValue)
-  // Edit: start in Markdown source; view-only: start rendered for reading
-  const [viewMode, setViewMode] = useState<EditorViewMode>(canEdit ? 'markdown' : 'rendered')
+  // Content is shown rendered first; only empty cells open straight in the editor
+  const [viewMode, setViewMode] = useState<EditorViewMode>(
+    canEdit && !initialValue.trim() ? 'markdown' : 'rendered'
+  )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isDirty = canEdit && text !== initialValue
+  const showSaveActions = canEdit && (viewMode === 'markdown' || isDirty)
 
   useEffect(() => {
     setText(initialValue)
@@ -164,11 +168,15 @@ export function CustomValueEditor({
         <div className="min-w-0">
           <h2 className="font-hand text-lg text-ink truncate">{columnName}</h2>
           <p className="text-xs text-ink-faded">
-            {canEdit ? t('customColumns', 'markdownHint') : t('customColumns', 'viewOnlyHint')}
+            {!canEdit
+              ? t('customColumns', 'viewOnlyHint')
+              : viewMode === 'markdown'
+                ? t('customColumns', 'markdownHint')
+                : t('customColumns', 'renderedHint')}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          {canEdit ? (
+          {showSaveActions ? (
             <>
               <button onClick={onCancel} className="btn-notebook text-sm">
                 {t('common', 'cancel')}
@@ -178,6 +186,14 @@ export function CustomValueEditor({
                 {t('common', 'save')}
               </button>
             </>
+          ) : canEdit ? (
+            <button
+              onClick={() => setViewMode('markdown')}
+              className="btn-notebook btn-notebook-primary text-sm"
+            >
+              <Pencil size={14} />
+              {t('customColumns', 'modeEdit')}
+            </button>
           ) : (
             <button onClick={onCancel} className="btn-notebook text-sm">
               {t('common', 'close')}
@@ -193,19 +209,6 @@ export function CustomValueEditor({
       <div className="flex items-center gap-1 px-4 border-b border-paper-lines flex-none">
         <button
           type="button"
-          onClick={() => setViewMode('markdown')}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px transition-colors',
-            viewMode === 'markdown'
-              ? 'border-ink-blue text-ink font-medium'
-              : 'border-transparent text-ink-faded hover:text-ink'
-          )}
-        >
-          <Code2 size={14} />
-          {t('customColumns', 'modeEdit')}
-        </button>
-        <button
-          type="button"
           onClick={() => setViewMode('rendered')}
           className={cn(
             'flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px transition-colors',
@@ -216,6 +219,19 @@ export function CustomValueEditor({
         >
           <Eye size={14} />
           {t('customColumns', 'modeView')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('markdown')}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px transition-colors',
+            viewMode === 'markdown'
+              ? 'border-ink-blue text-ink font-medium'
+              : 'border-transparent text-ink-faded hover:text-ink'
+          )}
+        >
+          <Code2 size={14} />
+          {canEdit ? t('customColumns', 'modeEdit') : t('customColumns', 'modeSource')}
         </button>
       </div>
 
@@ -244,7 +260,10 @@ export function CustomValueEditor({
             </div>
           )
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
+            onDoubleClick={canEdit ? () => setViewMode('markdown') : undefined}
+          >
             {displayValue.trim() ? (
               <MarkdownContent content={displayValue} />
             ) : (

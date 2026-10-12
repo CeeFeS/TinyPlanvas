@@ -289,16 +289,14 @@ export default function ProjectPage() {
 
                 <span className="w-2 h-2 rounded-full bg-chip-green-300 animate-pulse" title={t('projectDetail', 'liveSyncActive')} />
 
-                {isOwner && (
-                  <button
-                    onClick={() => setShowShareModal(true)}
-                    className="btn-icon"
-                    title={t('dashboard', 'shareProject')}
-                    aria-label={t('dashboard', 'shareProject')}
-                  >
-                    <Share2 size={16} />
-                  </button>
-                )}
+                <button
+                  onClick={() => setShowShareModal(true)}
+                  className="btn-icon"
+                  title={isOwner ? t('dashboard', 'shareProject') : t('share', 'exportTitle')}
+                  aria-label={isOwner ? t('dashboard', 'shareProject') : t('share', 'exportTitle')}
+                >
+                  <Share2 size={16} />
+                </button>
               </div>
             </div>
 
@@ -317,13 +315,14 @@ export default function ProjectPage() {
         <PlanningGrid />
       </main>
 
-      {isOwner && showShareModal && (
+      {showShareModal && (
         <ShareProjectModal
           isOpen
           onClose={() => setShowShareModal(false)}
           projectId={project.id}
           projectName={project.name}
           ownerId={project.user_id}
+          isOwner={isOwner}
           onProjectShareChange={(updated) => setProject(updated)}
         />
       )}
